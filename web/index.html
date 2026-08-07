@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bgmlikes · Bangumi 动画推荐</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1e26; --line:#2a2f3a; --text:#e8eaf0; --sub:#9aa0ac; --accent:#5b8cff; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; min-height:100vh; }
+  .wrap { max-width:640px; margin:0 auto; padding:48px 20px 80px; }
+  h1 { font-size:24px; margin-bottom:4px; }
+  .sub { color:var(--sub); font-size:13px; margin-bottom:28px; }
+  .search { display:flex; gap:8px; }
+  input { flex:1; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; outline:none; }
+  input:focus { border-color:var(--accent); }
+  button { padding:12px 20px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .meta { color:var(--sub); font-size:13px; margin-top:18px; min-height:20px; }
+  .card { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 16px; margin-top:12px; }
+  .cover { width:56px; height:76px; object-fit:cover; border-radius:8px; background:var(--bg); flex-shrink:0; }
+  .card .rank { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px; background:var(--accent); color:#fff; font-size:13px; font-weight:600; margin-right:10px; vertical-align:middle; }
+  .card .name { font-size:16px; font-weight:600; vertical-align:middle; }
+  .card .badge { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+  .card .badge.cold { background:rgba(91,140,255,.15); color:var(--accent); border:1px solid rgba(91,140,255,.35); }
+  .card .badge.hot { background:rgba(154,160,172,.12); color:var(--sub); border:1px solid rgba(154,160,172,.25); }
+  .err { color:#ff6b6b; font-size:14px; margin-top:16px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>bgmlikes</h1>
+  <div class="sub">输入 Bangumi 用户名，获得个性化动画推荐 · <a href="https://bgm.tv" target="_blank" style="color:var(--accent)">bgm.tv</a></div>
+
+  <div class="search">
+    <input id="q" placeholder="Bangumi 用户名（不是昵称，主页URL里的名字）" autocomplete="off" />
+    <button id="go">推荐</button>
+  </div>
+
+  <div id="meta" class="meta"></div>
+  <div id="err" class="err hidden"></div>
+  <div id="list"></div>
+</div>
+
+<script>
+const q = document.getElementById('q');
+const go = document.getElementById('go');
+const meta = document.getElementById('meta');
+const err = document.getElementById('err');
+const list = document.getElementById('list');
+
+async function recommend() {
+  const username = q.value.trim();
+  if (!username) return;
+  err.classList.add('hidden');
+  list.innerHTML = '';
+  meta.textContent = '正在拉取用户数据…';
+  go.disabled = true;
+  try {
+    const res = await fetch('/v1/recommend', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, k: 20})
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || `HTTP ${res.status}`);
+    }
+    const d = await res.json();
+    meta.textContent = `${d.username} 的推荐（${d.count} 条 · 冷门角标 = 热度前12%之外）`;
+    if (d.source === 'cache') meta.textContent += ' · ⚠ 本地缓存（Bangumi 暂不可达）';
+    list.innerHTML = (d.recommendations || []).map((r, i) => `
+      <div class="card">
+        <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
+        <span class="rank">${i + 1}</span><span class="name">${escapeHtml(r.name ?? '')}</span>
+        <span class="badge ${r.cold ? 'cold' : 'hot'}">${r.cold ? '冷门发现' : '热门'}</span>
+      </div>`).join('');
+  } catch (e) {
+    err.classList.remove('hidden');
+    err.textContent = e.message;
+    meta.textContent = '';
+  } finally {
+    go.disabled = false;
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+go.addEventListener('click', recommend);
+q.addEventListener('keydown', e => { if (e.key === 'Enter') recommend(); });
+</script>
+</body>
+</html>
