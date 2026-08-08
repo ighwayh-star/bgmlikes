@@ -15,7 +15,8 @@
   input { flex:1; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; outline:none; }
   input:focus { border-color:var(--accent); }
   button { padding:12px 20px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:wait; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.sec { background:transparent; border:1px solid var(--accent); color:var(--accent); }
   .meta { color:var(--sub); font-size:13px; margin-top:18px; min-height:20px; }
   .card { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 16px; margin-top:12px; }
   .cover { width:56px; height:76px; object-fit:cover; border-radius:8px; background:var(--bg); flex-shrink:0; }
@@ -36,6 +37,7 @@
   <div class="search">
     <input id="q" placeholder="Bangumi 用户名（不是昵称，主页URL里的名字）" autocomplete="off" />
     <button id="go">推荐</button>
+    <button id="export" class="sec" disabled>导出 JPG</button>
   </div>
 
   <div id="meta" class="meta"></div>
@@ -46,9 +48,11 @@
 <script>
 const q = document.getElementById('q');
 const go = document.getElementById('go');
+const exportBtn = document.getElementById('export');
 const meta = document.getElementById('meta');
 const err = document.getElementById('err');
 const list = document.getElementById('list');
+let lastData = null;
 
 async function recommend() {
   const username = q.value.trim();
@@ -57,6 +61,7 @@ async function recommend() {
   list.innerHTML = '';
   meta.textContent = '正在拉取用户数据…';
   go.disabled = true;
+  exportBtn.disabled = true;
   try {
     const res = await fetch('/v1/recommend', {
       method: 'POST',
@@ -68,6 +73,8 @@ async function recommend() {
       throw new Error(d.detail || `HTTP ${res.status}`);
     }
     const d = await res.json();
+    lastData = d;
+    exportBtn.disabled = false;
     meta.textContent = `${d.username} 的推荐（${d.count} 条 · 冷门角标 = 热度前12%之外）`;
     if (d.source === 'cache') meta.textContent += ' · ⚠ 本地缓存（Bangumi 暂不可达）';
     list.innerHTML = (d.recommendations || []).map((r, i) => `
@@ -91,6 +98,141 @@ function escapeHtml(s) {
 
 go.addEventListener('click', recommend);
 q.addEventListener('keydown', e => { if (e.key === 'Enter') recommend(); });
+
+/* ---- 导出 JPG（原生 canvas 手绘，零依赖） ---- */
+const FONT = '"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif';
+const COLORS = { bg:'#0f1115', card:'#1a1e26', text:'#e8eaf0', sub:'#9aa0ac', accent:'#5b8cff' };
+
+function preloadImage(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawRoundedImage(ctx, img, x, y, w, h, r) {
+  ctx.save();
+  roundRect(ctx, x, y, w, h, r);
+  ctx.clip();
+  ctx.drawImage(img, x, y, w, h);
+  ctx.restore();
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const lines = [];
+  let cur = '';
+  for (const ch of text) {
+    if (cur && ctx.measureText(cur + ch).width > maxWidth) { lines.push(cur); cur = ch; }
+    else cur += ch;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+function ellipsis(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let t = text;
+  while (t && ctx.measureText(t + '…').width > maxWidth) t = t.slice(0, -1);
+  return t + '…';
+}
+
+async function exportJpg() {
+  const recs = lastData && lastData.recommendations;
+  if (!recs || !recs.length) return;
+  exportBtn.disabled = true;
+  try {
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    const covers = await Promise.all(recs.map(r => preloadImage('/img/' + r.subject_id)));
+
+    const W = 640, PAD = 24;
+    const ROW_H = 88, GAP = 10;
+    const TITLE_BOTTOM = 90, PAD_BOTTOM = 24;
+    const H = TITLE_BOTTOM + recs.length * (ROW_H + GAP) - GAP + PAD_BOTTOM;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = W * 2; canvas.height = H * 2;  // ×2 保证清晰
+    const ctx = canvas.getContext('2d');
+    ctx.scale(2, 2);
+
+    ctx.fillStyle = COLORS.bg;  // JPG 无透明，先铺满
+    ctx.fillRect(0, 0, W, H);
+
+    // 顶部标题：{用户名} 的动画推荐
+    ctx.fillStyle = COLORS.text;
+    ctx.font = 'bold 28px ' + FONT;
+    ctx.fillText((lastData.username || '') + ' 的动画推荐', PAD, 60);
+
+    const now = new Date();
+    const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+
+    // 行（只保留条目：封面 + 名称，无排名/角标/卡片衬底）
+    recs.forEach((r, i) => {
+      const y = TITLE_BOTTOM + i * (ROW_H + GAP);
+      const cx = PAD, cy = y + (ROW_H - 76) / 2;
+      // 封面（失败 → 占位块 + 首字）
+      if (covers[i]) {
+        drawRoundedImage(ctx, covers[i], cx, cy, 56, 76, 8);
+      } else {
+        ctx.fillStyle = '#11151c';
+        roundRect(ctx, cx, cy, 56, 76, 8);
+        ctx.fill();
+        ctx.fillStyle = COLORS.sub;
+        ctx.font = '600 20px ' + FONT;
+        ctx.textAlign = 'center';
+        ctx.fillText((r.name || '?').charAt(0), cx + 28, cy + 48);
+        ctx.textAlign = 'left';
+      }
+      // 名称（最多 2 行，超长省略号），垂直居中
+      const nameX = cx + 56 + 14;
+      const nameMax = W - PAD - nameX;
+      ctx.font = 'bold 16px ' + FONT;
+      const lines = wrapText(ctx, r.name || '（未知）', nameMax).slice(0, 2);
+      if (lines.length === 2 && ctx.measureText(lines[1] + '…').width > nameMax) {
+        lines[1] = ellipsis(ctx, lines[1], nameMax);
+      }
+      const midY = y + ROW_H / 2;
+      ctx.fillStyle = COLORS.text;
+      if (lines.length === 1) {
+        ctx.fillText(lines[0], nameX, midY + 6);
+      } else {
+        ctx.fillText(lines[0], nameX, midY - 6);
+        ctx.fillText(lines[1], nameX, midY + 24);
+      }
+    });
+
+    const safeName = (lastData.username || 'user').replace(/[\\/:*?"<>|\s]/g, '_');
+    canvas.toBlob(blob => {
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'bgmlikes-' + safeName + '-' + dateStr + '.jpg';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+      exportBtn.disabled = false;
+    }, 'image/jpeg', 0.92);
+  } catch (e) {
+    console.error('导出失败', e);
+    exportBtn.disabled = false;
+  }
+}
+
+exportBtn.addEventListener('click', exportJpg);
 </script>
 </body>
 </html>
