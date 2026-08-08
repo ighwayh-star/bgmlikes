@@ -24,7 +24,8 @@ python -m uvicorn src.api:app --host 127.0.0.1 --port 8000
 ## 算法流水线（产品当前配置）
 
 ```
-User-CF（idf_binary + KNN=200, λ=0）       评分核心（ADR 0001）
+User-CF（评分加权 idf×rate + KNN=200, λ=0）  评分核心（ADR 0005，替代 0001 的二值）
+   口味信号排除四分以下（rate ≤ 4 不算正信号）：用户打低分的动画不再"帮推"同类
 → franchise 排除：已看系列的其余成员不进候选（续作/剧场版不占位）  （ADR 0003）
 → franchise 去重：列表内每个系列至多 1 条（保留 CF 分最高）
 → 冷门配额：20 条里至少 8 条来自冷门池（热度排名 > 3000）        （ADR 0002）
@@ -43,6 +44,8 @@ User-CF（idf_binary + KNN=200, λ=0）       评分核心（ADR 0001）
 | `blend_lambda` | 0.0 | 流行度混合系数（IDF 后归零） |
 | `cold_quota` | 8 | 20 条里至少 N 条冷门（更大=更冷，12 时 Recall −8%） |
 | `cold_rank_threshold` | 3000 | 冷门 = 热度排名超过该阈值（全站前 12% 之外） |
+| `matrix_min_rate` | 0 | 训练矩阵只收 rate>该值的对（0 = 全部 rate>0，ADR 0005） |
+| `taste_min_rate` | 4 | 口味信号排除 rate≤该值（四分以下不算正信号） |
 
 ## 验证
 
@@ -69,6 +72,8 @@ python -m scripts.measure_hotness --users 500    # 热度分布对比（纯CF/fr
 | `scripts/import_archive.py` | Archive dump → subjects |
 | `scripts/import_relations.py` | 条目关系 → subject_relations（franchise 数据源） |
 | `scripts/crawl_users.py` / `run_20k.py` | 用户爬取 + 看门狗 |
+| `scripts/build_rated_table.py` | 一次性迁移：物化 collections_rated_rate（rate>0+rate，评分加权数据源） |
+| `scripts/experiment_rating_weight.py` | 评分加权对比实验（矩阵/查询双层低分阈值） |
 
 ## 决策记录
 
@@ -82,3 +87,5 @@ python -m scripts.measure_hotness --users 500    # 热度分布对比（纯CF/fr
 - **宕机降级链**（2026-08-07）：`/v1/recommend` 实时拉取失败时自动降级到本地语料缓存（已爬取的 2 万用户仍可出推荐），响应 `source="cache"` 标注、前端提示"本地缓存"。实时拉取有 15s 整体超时；网络不通（ConnectError）时 ~1s 快速失败。未知用户 + 宕机 = 502。
 - **看门狗**（2026-08-07）：本机内存压力可能压死服务器（夜里已发生两次）。`scripts/watch_server.py` 每 90s 健康检查、进程死了自动重启（独立 DETACHED 运行，不依赖会话），07:30 自动退出。手动部署：`python -m scripts.watch_server`（前台）或 DETACHED 后台跑。
 - **封面图**（2026-08-07）：lain.bgm.tv（bgm.tv 封面 CDN）是 Cloudflare 海外节点，**大陆直连超时**。所以封面图经 `/img/{id}` 由本服务中转：首次拉取落盘（data/covers/，随 data/ 被 gitignore），之后秒开。测试：`curl http://127.0.0.1:8000/img/1`。
+- **评分加权数据源**（2026-08-08）：评分加权（ADR 0005）需要 rate 走快速加载路径，先跑一次 `python -m scripts.build_rated_table` 物化 `collections_rated_rate`（含 rate 的覆盖索引）。未跑则 Recommender 加载报错（表不存在）。增量刷新后需重跑该迁移。
+- **评分加权实测**（2026-08-08）：`scripts/experiment_rating_weight.py` 全量（12000 重度用户/700 评估）实测：1-10 加权 + 查询排除≤4，产品路径 Recall +6.7% / NDCG +5.8%（相对原二值）；矩阵是否剔除低分对结果无差别。成本零（稀疏结构不变）。

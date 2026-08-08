@@ -98,11 +98,13 @@ def build_encoding(
     n_items: int,
     ui: np.ndarray,
     ii: np.ndarray,
+    values: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """编码交互为 IDF 加权矩阵（阶段 3：反频权重生效，评分中心化被数据否决）。
 
     ui, ii: 训练交互的 (用户索引, 物品索引) 数组/序列；调用方负责过滤（rate>0、train-only 防泄漏）。
-    值 A[u, i] = idf[i]（看过则等于该条目的反频权重，否则 0）。
+    values: 每个 (u,i) 对的数值乘子（如 1-10 评分）；None = 1（纯 IDF 二值）。
+        值 A[u, i] = idf[i] * values[pair]（默认 idf[i]）。
     返回 (A, Bn, idf)；Bn 为行 L2 归一化，是余弦相似度的来源。
     20k 语料：稀疏 csr 存储（~4.6M 非零 ≈ 75MB），替代稠密 U×I（~5GB×2）会爆内存。
     """
@@ -114,7 +116,11 @@ def build_encoding(
         return empty, empty, idf
     df = np.bincount(ii, minlength=n_items).astype(np.float64)
     idf = np.log((n_users + 1) / (df + 1)) + 1.0
-    A = sp.csr_matrix((idf[ii], (ui, ii)), shape=(n_users, n_items))
+    if values is None:
+        val = idf[ii]
+    else:
+        val = idf[ii] * np.asarray(values, dtype=np.float64).ravel()
+    A = sp.csr_matrix((val, (ui, ii)), shape=(n_users, n_items))
     row_norm = np.sqrt(np.asarray(A.multiply(A).sum(axis=1)).ravel())
     inv = np.zeros(n_users)
     nz = row_norm > 0
@@ -123,13 +129,27 @@ def build_encoding(
     return A, Bn, idf
 
 
-def encode_profile(items: list[int], iidx: dict[int, int], idf: np.ndarray) -> np.ndarray:
-    """目标用户口味 → 与矩阵同构的 IDF 加权向量 q（余弦要同尺度对比）。"""
+def encode_profile(
+    items: list[int],
+    iidx: dict[int, int],
+    idf: np.ndarray,
+    weights: list[float] | None = None,
+) -> np.ndarray:
+    """目标用户口味 → 与矩阵同构的 IDF 加权向量 q（余弦要同尺度对比）。
+
+    weights: 每个 item 的额外乘子（如 1-10 评分）；None = 1。
+    """
     q = np.zeros(len(iidx))
-    for sid in items:
-        i = iidx.get(sid)
-        if i is not None:
-            q[i] = idf[i]
+    if weights is None:
+        for sid in items:
+            i = iidx.get(sid)
+            if i is not None:
+                q[i] = idf[i]
+    else:
+        for sid, w in zip(items, weights):
+            i = iidx.get(sid)
+            if i is not None:
+                q[i] = idf[i] * w
     return q
 
 
@@ -196,12 +216,16 @@ class Recommender:
         knn: int = 200,
         cold_quota: int = 8,
         cold_rank_threshold: int = 3000,
+        matrix_min_rate: int = 0,   # 训练矩阵只收 rate>该值的对（0 = 全部 rate>0，ADR 0005）
+        taste_min_rate: int = 4,    # 口味信号排除 rate≤该值（"四分以下不算"）
     ):
         self._blend_lambda = blend_lambda
         self._min_profile = min_profile
         self._knn = knn
         self._cold_quota = cold_quota
         self._cold_rank_threshold = cold_rank_threshold
+        self._matrix_min_rate = matrix_min_rate
+        self._taste_min_rate = taste_min_rate
         self._load(db_path)
 
     # ---- 加载 ---------------------------------------------------
@@ -223,13 +247,14 @@ class Recommender:
                 "nsfw": bool(nsfw),
             }
 
-        # 语料交互：只看过且带评分的收藏（rate>0，阶段 1.5 验证的强信号）。
-        # 20k 语料流式化：从物化子表 collections_rated 读（仅 rate>0，按 user_hash 索引序），
-        # 不 fetchall 全量、不建 by_user 字典、无临时排序，峰值内存 <400MB。
+        # 语料交互：rate>0 收藏（阶段 1.5 验证的强信号），1-10 评分加权（2026-08-08 ADR 0005）。
+        # 数据源 collections_rated_rate（迁移自 collections WHERE rate>0，含 rate，覆盖索引
+        # (user_hash, subject_id, updated_at)）。matrix_min_rate 可再过滤低分对。
+        # 20k 语料流式化：不 fetchall 全量、不建 by_user 字典、无临时排序，峰值内存 <400MB。
         # 第一遍：物品全集（限有元数据的，用于候选集与 iidx）
         item_set = {
             r[0] for r in conn.execute(
-                "SELECT DISTINCT subject_id FROM collections_rated"
+                "SELECT DISTINCT subject_id FROM collections_rated_rate"
             )
         }
         item_set = {sid for sid in item_set if sid in self.subject_meta}
@@ -237,13 +262,16 @@ class Recommender:
         self._iidx = {sid: i for i, sid in enumerate(self._items)}
         n_items = len(self._items)
 
-        # 第二遍：按用户流式收集训练对（用户索引按首次出现递增；索引序即 user_hash 序）
+        # 第二遍：按用户流式收集训练对 + 评分（用户索引按首次出现递增；索引序即 user_hash 序）
         ui_list: list[int] = []
         ii_list: list[int] = []
+        rate_list: list[float] = []
         uid = 0
         last_user: str | None = None
-        for uh, sid in conn.execute(
-            "SELECT user_hash, subject_id FROM collections_rated ORDER BY user_hash"
+        for uh, sid, rate in conn.execute(
+            "SELECT user_hash, subject_id, rate FROM collections_rated_rate"
+            " WHERE rate > ? ORDER BY user_hash",
+            (self._matrix_min_rate,),
         ):
             if uh != last_user:
                 last_user = uh
@@ -252,13 +280,18 @@ class Recommender:
             if ii is not None:
                 ui_list.append(uid - 1)
                 ii_list.append(ii)
+                rate_list.append(rate)
 
         # franchise：同一部动画的不同季/续作/剧场版/番外（见 build_franchise 与 docs/adr/0003）
         self._franchise_root = build_franchise(self._items, conn)
         conn.close()
 
-        # IDF 加权交互矩阵 + 行归一化（User-CF 的相似度来源，阶段 3 生效）
-        self._A, self._Bn, self._idf = build_encoding(uid, n_items, ui_list, ii_list)
+        # 评分加权 IDF 交互矩阵 + 行归一化（A[u,i]=idf[i]*rate；rate 为 1-10 分值）。
+        # 与二值相比稀疏结构不变、零额外成本（ADR 0005 全量实测 Recall +6.3% / NDCG +7.2%）。
+        self._A, self._Bn, self._idf = build_encoding(
+            uid, n_items, ui_list, ii_list,
+            values=np.asarray(rate_list, dtype=np.float64),
+        )
 
         self._pop = np.array([self.subject_meta[sid]["fav_done"] for sid in self._items], dtype=float)
         self._log_pop = np.log1p(self._pop)
@@ -293,7 +326,15 @@ class Recommender:
         profile: 目标用户"看过且评分"的收藏（口味信号）
         already_collected: 目标用户全部收藏的 subject_id（过滤候选）
         """
-        q = encode_profile([e.subject_id for e in profile], self._iidx, self._idf)
+        # 口味信号：排除四分以下（rate ≤ taste_min_rate 不算正信号，2026-08-08），
+        # 评分作为权重（q[i]=idf[i]*rate）。franchise 排除与 nsfw 判断仍用全部 profile。
+        taste = [e for e in profile if e.rate > self._taste_min_rate]
+        q = encode_profile(
+            [e.subject_id for e in taste],
+            self._iidx,
+            self._idf,
+            weights=[float(e.rate) for e in taste],
+        )
 
         scores = score_items(
             self._Bn, self._A, self._log_pop, q,

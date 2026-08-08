@@ -36,18 +36,19 @@ KNN_POOL = 200  # 产品默认候选池收敛（阶段3-3 定稿）
 
 
 def load():
-    """流式加载并时间切分。返回 (fav, iidx, item_list, ui, ii, eval_users, n_users)。
+    """流式加载并时间切分。返回 (fav, iidx, item_list, ui, ii, rate, eval_users, n_users)。
 
-    ui/ii: 全体用户 train 交互的 (用户索引, 物品索引) 数组，供 build_encoding。
-    eval_users: [{ui, train(列表), test(set)}]，仅重度用户，用于打分评估。
+    ui/ii/rate: 全体用户 train 交互的 (用户索引, 物品索引, 评分) 数组，供 build_encoding
+    （评分加权，ADR 0005）。
+    eval_users: [{ui, train(列表), train_rates, test(set)}]，仅重度用户，用于打分评估。
     """
     conn = sqlite3.connect(DB)
     fav = dict(conn.execute("SELECT id, fav_done FROM subjects").fetchall())
 
     # 第一遍：物品全集（含 test 部分，保证 iidx 覆盖候选池）。
-    # collections_rated 为物化子表（仅 rate>0，user_hash 索引序），无过滤无排序，扫描快。
+    # collections_rated_rate 为物化子表（rate>0 + rate，user_hash 索引序），无过滤无排序，扫描快。
     item_set = {
-        r[0] for r in conn.execute("SELECT DISTINCT subject_id FROM collections_rated")
+        r[0] for r in conn.execute("SELECT DISTINCT subject_id FROM collections_rated_rate")
     }
     item_list = sorted(item_set)
     iidx = {sid: i for i, sid in enumerate(item_list)}
@@ -55,37 +56,41 @@ def load():
 
     ui_list: list[int] = []
     ii_list: list[int] = []
+    rate_list: list[float] = []
     eval_users: list[dict] = []
     uid = 0
     last_user: str | None = None
-    buf: list[tuple[int, str]] = []  # (sid, updated_at)，按时间排序后切分
+    buf: list[tuple[int, int, str]] = []  # (sid, rate, updated_at)，按时间排序后切分
 
     def flush() -> None:
         nonlocal buf
-        buf.sort(key=lambda x: x[1])  # 每用户内按收藏时间排序，时间切分
+        buf.sort(key=lambda x: x[2])  # 每用户内按收藏时间排序，时间切分
         n = len(buf)
         split = int(n * 0.8) if n >= MIN_COLLECT else n
         train = buf[:split]
         test = buf[split:]
-        for sid, _ in train:
+        for sid, rate, _ in train:
             ii_list.append(iidx[sid])
             ui_list.append(uid - 1)
+            rate_list.append(rate)
         if n >= MIN_COLLECT and test and len(train) >= MIN_TRAIN:
             eval_users.append({
                 "ui": uid - 1,
-                "train": [s for s, _ in train],
-                "test": set(s for s, _ in test),
+                "train": [s for s, _, _ in train],
+                "train_rates": [r for _, r, _ in train],
+                "test": set(s for s, _, _ in test),
             })
         buf = []
 
-    for uh, sid, ts in conn.execute(
-        "SELECT user_hash, subject_id, updated_at FROM collections_rated ORDER BY user_hash"
+    for uh, sid, rate, ts in conn.execute(
+        "SELECT user_hash, subject_id, rate, updated_at"
+        " FROM collections_rated_rate ORDER BY user_hash"
     ):
         if uh != last_user:
             flush()
             last_user = uh
             uid += 1
-        buf.append((sid, ts))
+        buf.append((sid, rate, ts))
     flush()
     conn.close()
 
@@ -95,6 +100,7 @@ def load():
         item_list,
         np.array(ui_list, dtype=np.int64),
         np.array(ii_list, dtype=np.int64),
+        np.array(rate_list, dtype=np.float64),
         eval_users,
         uid,
     )
@@ -114,7 +120,7 @@ def ndcg_recall(ranked, test, k=10):
 
 def main():
     t0 = time.time()
-    fav, iidx, item_list, ui, ii, eval_users, n_users = load()
+    fav, iidx, item_list, ui, ii, rate, eval_users, n_users = load()
     n_items = len(item_list)
     print(
         f"[load] {n_users} 用户 / {n_items} 物品 / 评估 {len(eval_users)} 重度用户"
@@ -122,9 +128,9 @@ def main():
         flush=True,
     )
 
-    # 训练矩阵（仅 train，防泄漏）——IDF 加权稀疏编码，与产品 recommender 同源
+    # 训练矩阵（仅 train，防泄漏）——评分加权 IDF 稀疏编码，与产品 recommender 同源（ADR 0005）
     t1 = time.time()
-    A, Bn, idf = build_encoding(n_users, n_items, ui, ii)
+    A, Bn, idf = build_encoding(n_users, n_items, ui, ii, values=rate)
     log_pop = np.log1p(np.array([fav.get(sid, 0) for sid in item_list], dtype=float))
     print(f"[build] 稀疏矩阵构建完成（{time.time()-t1:.0f}s）", flush=True)
 
@@ -132,11 +138,14 @@ def main():
     cnt = 0
     t2 = time.time()
     for eu in eval_users:
-        ui_, train, test = eu["ui"], eu["train"], eu["test"]
+        ui_, train, train_rates, test = eu["ui"], eu["train"], eu["train_rates"], eu["test"]
         train_idx = {iidx[sid] for sid in train}
         cand = [i for i in range(n_items) if i not in train_idx]
 
-        q = encode_profile(train, iidx, idf)
+        # 口味信号：排除四分以下（rate>4），评分加权（与产品 recommend() 同源）
+        taste = [(s, r) for s, r in zip(train, train_rates) if r > 4]
+        q = encode_profile(
+            [s for s, _ in taste], iidx, idf, weights=[float(r) for _, r in taste])
 
         s_pop = log_pop
         # BLEND_LAMBDA=0.0 时 cf_pure 与 cf_hybrid 完全相同，只算一次（省一半计算）

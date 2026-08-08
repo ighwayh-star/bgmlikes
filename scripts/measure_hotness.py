@@ -34,7 +34,7 @@ def main() -> None:
     args = parser.parse_args()
 
     t0 = time.time()
-    _, _, _, _, _, eval_users, _ = load()
+    _, _, _, _, _, _, eval_users, _ = load()
     r = Recommender(DB)
     iidx = r._iidx
     n = len(r._items)
@@ -54,7 +54,11 @@ def main() -> None:
             continue
         train_idx = {iidx[s] for s in train}
         cand0 = [i for i in range(n) if i not in train_idx]
-        q = encode_profile(train, iidx, r._idf)
+        # 口味信号：排除四分以下（rate>4），评分加权（与产品 recommend() 同源）
+        taste = [(s, r_) for s, r_ in zip(eu["train"], eu["train_rates"])
+                 if s in iidx and r_ > 4]
+        q = encode_profile([s for s, _ in taste], iidx, r._idf,
+                           weights=[float(r_) for _, r_ in taste])
         scores = score_items(r._Bn, r._A, r._log_pop, q, 0.0, MIN_TRAIN, knn=r._knn)
 
         watched = {r._franchise_root.get(s, s) for s in train}
