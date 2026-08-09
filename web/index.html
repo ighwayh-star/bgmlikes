@@ -91,6 +91,7 @@ let lastData = null;
 let activeTab = 'normal';  // 'normal' 动画推荐 / 'cold' 冷门发现
 let hidden = new Map();    // sid -> name（登录后从服务端加载的"不感兴趣"）
 let loggedIn = false;      // 是否已登录（隐藏功能的前提）
+let me = null;             // 登录用户的 Bangumi 用户名
 
 // ---- 登录态 ----
 async function refreshAuth() {
@@ -99,12 +100,14 @@ async function refreshAuth() {
     const d = await r.json();
     loggedIn = !!d.logged_in;
     if (loggedIn) {
-      userLabel.textContent = d.username;
+      me = d.username;
+      userLabel.textContent = me;
       loginBtn.classList.add('hidden');
       logoutBtn.classList.remove('hidden');
       userLabel.classList.remove('hidden');
       await loadHiddenServer();
     } else {
+      me = null;
       hidden.clear();
       userLabel.classList.add('hidden');
       logoutBtn.classList.add('hidden');
@@ -180,17 +183,26 @@ function allRecs() {
   return activeTab === 'cold' ? (lastData.cold || []) : (lastData.normal || []);
 }
 
-// 可见列表：过滤掉"不感兴趣"的，取前 20 条——隐藏后空位由池内下一位替补
+// 当前查看的是不是登录用户自己（"不感兴趣"只对自己可见/可用，不能改别人的喜好）
+function viewingSelf() {
+  return loggedIn && !!me && !!lastData
+    && String(lastData.username).toLowerCase() === String(me).toLowerCase();
+}
+
+// 可见列表：取前 20 条；仅"查看自己"时应用"不感兴趣"过滤，隐藏后空位由池内下一位替补
 function visibleRecs() {
-  return allRecs().filter(r => !hidden.has(r.subject_id)).slice(0, 20);
+  if (!lastData) return [];
+  const pool = activeTab === 'cold' ? (lastData.cold || []) : (lastData.normal || []);
+  return (viewingSelf() ? pool.filter(r => !hidden.has(r.subject_id)) : pool).slice(0, 20);
 }
 
 function renderList() {
+  const self = viewingSelf();
   list.innerHTML = visibleRecs().map((r, i) => `
     <div class="card">
       <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
       <span class="rank">${i + 1}</span><span class="name">${escapeHtml(r.name ?? '')}</span>
-      <button class="hide" data-sid="${r.subject_id}" title="不感兴趣">✕</button>
+      ${self ? `<button class="hide" data-sid="${r.subject_id}" title="不感兴趣">✕</button>` : ''}
     </div>`).join('');
   renderRestore();
 }
@@ -199,15 +211,15 @@ function updateMeta() {
   if (!lastData) { meta.textContent = ''; return; }
   const d = lastData;
   let t = `${d.username} 的推荐（${activeTab === 'cold' ? '冷门发现' : '动画推荐'} ${visibleRecs().length} 条`;
-  if (hidden.size) t += ` · 已隐藏 ${hidden.size} 条`;
+  if (viewingSelf() && hidden.size) t += ` · 已隐藏 ${hidden.size} 条`;
   t += '）';
   if (d.source === 'cache') t += ' · ⚠ 本地缓存（Bangumi 暂不可达）';
   meta.textContent = t;
 }
 
-// 误操作兜底：展开"已隐藏"列表，可单项恢复 / 清空全部
+// 误操作兜底：展开"已隐藏"列表，可单项恢复 / 清空全部（仅"查看自己"时显示）
 function renderRestore() {
-  if (!hidden.size) { restore.classList.add('hidden'); restore.innerHTML = ''; return; }
+  if (!viewingSelf() || !hidden.size) { restore.classList.add('hidden'); restore.innerHTML = ''; return; }
   restore.classList.remove('hidden');
   restore.innerHTML = `
     <h3>已隐藏 ${hidden.size} 条（不感兴趣）</h3>
