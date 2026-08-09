@@ -69,6 +69,10 @@ class RecommendRequest(BaseModel):
     k: int = 20
 
 
+class HiddenIn(BaseModel):
+    hidden: bool
+
+
 class ItemOut(BaseModel):
     subject_id: int
     name: str
@@ -162,9 +166,6 @@ def create_app() -> FastAPI:
         if sess is None:
             raise HTTPException(status_code=401, detail="请先登录")
         return {"hidden": sorted(auth.get_hidden(sess.user_id))}
-
-    class HiddenIn(BaseModel):
-        hidden: bool
 
     @app.post("/preferences/hidden/{subject_id}")
     def set_hidden(request: Request, subject_id: int, body: HiddenIn) -> dict:

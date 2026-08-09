@@ -211,6 +211,8 @@ const list = document.getElementById('list');
 const restore = document.getElementById('restore');
 let lastData = null;
 let activeTab = 'normal';  // 'normal' 动画推荐 / 'cold' 冷门发现
+let shown = { normal: [], cold: [] };  // 各 tab 当前展示的 20 条（加权随机选出，非固定前 20）
+let shownBefore = new Set();           // 上次展示过的 sid（sessionStorage 持久化，保证每次刷新选出不同的 20 部）
 let hidden = new Map();    // sid -> name（登录后从服务端加载的"不感兴趣"）
 let loggedIn = false;      // 是否已登录（隐藏功能的前提）
 let me = null;             // 登录用户的 Bangumi 用户名
@@ -285,6 +287,10 @@ async function recommend() {
     activeTab = 'normal';
     // 已登录：重新从服务端拉"不感兴趣"（比上次推荐时的可能新增），并补当前列表名
     if (loggedIn) await loadHiddenServer();
+    // 加权随机选出本页展示的 20 部：每次进入页面不同，排名越靠前出现概率越大
+    resampleTab('normal');
+    resampleTab('cold');
+    persistShown();
     tabs.classList.remove('hidden');
     [...tabs.children].forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
     exportBtn.disabled = false;
@@ -311,11 +317,71 @@ function viewingSelf() {
     && String(lastData.username).toLowerCase() === String(me).toLowerCase();
 }
 
-// 可见列表：取前 20 条；仅"查看自己"时应用"不感兴趣"过滤，隐藏后空位由池内下一位替补
+// 可见列表：当前 tab 已加权随机选出的 20 条（每次进入页面不同）
 function visibleRecs() {
   if (!lastData) return [];
-  const pool = activeTab === 'cold' ? (lastData.cold || []) : (lastData.normal || []);
-  return (viewingSelf() ? pool.filter(r => !hidden.has(r.subject_id)) : pool).slice(0, 20);
+  return shown[activeTab] ?? [];
+}
+
+/* ---- 加权随机 20 选 ----
+   从 40 条候选里无放回加权抽 20：排名越靠前权重越大（出现概率越高）；
+   上次展示过的条目权重 ×0.2，保证每次进入页面选出的 20 部尽量不同。 */
+function loadShownBefore() {
+  try {
+    const s = sessionStorage.getItem('bgmlikes_shown');
+    if (s) shownBefore = new Set(JSON.parse(s));
+  } catch (e) {}
+}
+loadShownBefore();
+
+function weightedPick(pool, n) {
+  const alive = pool.map((_, i) => i);   // 原始顺序索引（pool 即分数降序）
+  const weights = pool.map((r, i) => {
+    let w = pool.length - i;             // 第一名权重最大，最后一名为 1
+    if (shownBefore.has(r.subject_id)) w *= 0.1;   // 上次出现过的概率大降 → 每次刷新约 15/20 不同
+    return w;
+  });
+  let total = weights.reduce((a, b) => a + b, 0);
+  const out = [];
+  while (out.length < n && alive.length) {
+    let rnd = Math.random() * total;
+    let pos = alive.length - 1;
+    for (let i = 0; i < alive.length; i++) {
+      rnd -= weights[alive[i]];
+      if (rnd <= 0) { pos = i; break; }
+    }
+    const pick = alive[pos];
+    out.push(pool[pick]);
+    alive.splice(pos, 1);
+    total -= weights[pick];
+  }
+  return out;
+}
+
+function resampleTab(tab) {
+  const pool = lastData ? (lastData[tab] || []) : [];
+  const base = viewingSelf() ? pool.filter(r => !hidden.has(r.subject_id)) : pool;
+  shown[tab] = weightedPick(base, 20);
+}
+
+function persistShown() {
+  try {
+    sessionStorage.setItem('bgmlikes_shown', JSON.stringify([...new Set([...shown.normal, ...shown.cold])]));
+  } catch (e) {}
+}
+
+// 隐藏/恢复后：从当前展示移除被隐藏项，不足 20 时从池内加权补足
+function syncHiddenList() {
+  if (!lastData) return;
+  const pool = (activeTab === 'cold' ? (lastData.cold || []) : (lastData.normal || [])).filter(r => !hidden.has(r.subject_id));
+  const kept = shown[activeTab].filter(r => !hidden.has(r.subject_id));
+  const need = Math.max(0, 20 - kept.length);
+  if (need > 0) {
+    const rest = pool.filter(r => !kept.some(k => k.subject_id === r.subject_id));
+    shown[activeTab] = kept.concat(weightedPick(rest, need));
+  } else {
+    shown[activeTab] = kept;
+  }
 }
 
 function renderList() {
@@ -395,6 +461,7 @@ async function toggleHidden(sid, toHide) {
     } else {
       hidden.delete(sid);
     }
+    syncHiddenList();
     updateMeta();
     renderList();
   } catch (e) { alert('网络错误，请重试'); }
