@@ -5,50 +5,150 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>bgmlikes · Bangumi 动画推荐</title>
 <style>
-  :root { --bg:#0f1115; --card:#1a1e26; --line:#2a2f3a; --text:#e8eaf0; --sub:#9aa0ac; --accent:#5b8cff; }
+  :root {
+    --bg1: #fff0f5; --bg2: #fff8fb;
+    --card: rgba(255,255,255,.72);
+    --line: rgba(242,109,157,.18);
+    --text: #4a3f4e; --sub: #b39aa8;
+    --accent: #f26d9d; --accent-soft: #ffb3d1;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; min-height:100vh; }
-  .wrap { max-width:640px; margin:0 auto; padding:48px 20px 80px; }
-  h1 { font-size:24px; margin-bottom:4px; }
-  .sub { color:var(--sub); font-size:13px; margin-bottom:28px; }
-  .search { display:flex; gap:8px; }
-  input { flex:1; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:15px; outline:none; }
-  input:focus { border-color:var(--accent); }
-  button { padding:12px 20px; border-radius:10px; border:none; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  button.sec { background:transparent; border:1px solid var(--accent); color:var(--accent); }
-  .meta { color:var(--sub); font-size:13px; margin-top:18px; min-height:20px; }
-  .card { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 16px; margin-top:12px; }
-  .cover { width:56px; height:76px; object-fit:cover; border-radius:8px; background:var(--bg); flex-shrink:0; }
-  .card .rank { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px; background:var(--accent); color:#fff; font-size:13px; font-weight:600; margin-right:10px; vertical-align:middle; }
-  .card .name { font-size:16px; font-weight:600; vertical-align:middle; }
-  .card .badge { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
-  .card .badge.cold { background:rgba(91,140,255,.15); color:var(--accent); border:1px solid rgba(91,140,255,.35); }
-  .card .badge.hot { background:rgba(154,160,172,.12); color:var(--sub); border:1px solid rgba(154,160,172,.25); }
-  .card .hide { margin-left:auto; flex-shrink:0; width:28px; height:28px; padding:0; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--sub); font-size:14px; line-height:1; cursor:pointer; opacity:.55; }
-  .card .hide:hover { opacity:1; color:#fff; border-color:rgba(255,107,107,.6); background:rgba(255,107,107,.15); }
-  .topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-  .autharea { display:flex; align-items:center; gap:8px; white-space:nowrap; }
-  .autharea button { padding:8px 14px; font-size:13px; }
-  #userlabel { color:var(--sub); font-size:13px; }
-  .tabs { display:flex; gap:8px; margin-top:20px; }
-  .tab { flex:1; padding:10px 0; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--sub); font-size:14px; cursor:pointer; text-align:center; }
-  .tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
-  .restore { margin-top:16px; border:1px solid var(--line); border-radius:12px; background:var(--card); padding:12px 16px; }
-  .restore h3 { font-size:13px; color:var(--sub); margin-bottom:4px; font-weight:600; }
-  .restore .row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; font-size:14px; }
-  .restore .row button { padding:4px 10px; font-size:12px; border-radius:8px; }
-  .restore .clear { display:block; margin-top:8px; padding:6px 12px; font-size:12px; border-radius:8px; background:transparent; border:1px solid var(--line); color:var(--sub); cursor:pointer; }
-  .restore .clear:hover { color:#ff6b6b; border-color:rgba(255,107,107,.5); }
-  .err { color:#ff6b6b; font-size:14px; margin-top:16px; }
-  .hidden { display:none; }
+  html, body { min-height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+    color: var(--text);
+    font-family: "Yu Gothic Rounded","Yu Gothic","Hiragino Maru Gothic ProN","Varela Round","PingFang SC","Microsoft YaHei",sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  /* 樱花花瓣飘落 */
+  .petals { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  .petal {
+    position: absolute; top: -8vh; left: 0;
+    width: var(--size, 14px); height: var(--size, 14px);
+    background: radial-gradient(circle at 32% 32%, #ffe3f0, #ffb3d1 55%, #ff8fb8);
+    border-radius: 78% 22% 76% 24% / 62% 40% 60% 38%;
+    opacity: 0;
+    box-shadow: 0 0 6px rgba(242,109,157,.15);
+    animation: petal-fall var(--dur, 10s) linear var(--delay, 0s) infinite;
+  }
+  @keyframes petal-fall {
+    0%   { transform: translate3d(0, -6vh, 0) rotate(0deg); opacity: 0; }
+    8%   { opacity: .9; }
+    25%  { transform: translate3d(26px, 24vh, 0) rotate(96deg); opacity: .9; }
+    50%  { transform: translate3d(-20px, 50vh, 0) rotate(190deg); opacity: .85; }
+    75%  { transform: translate3d(24px, 76vh, 0) rotate(286deg); opacity: .7; }
+    100% { transform: translate3d(-12px, 108vh, 0) rotate(360deg); opacity: 0; }
+  }
+  .wrap { position: relative; z-index: 1; max-width: 640px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 {
+    font-size: 26px; margin-bottom: 4px; color: #e85f8d; letter-spacing: 1px;
+    text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35);
+  }
+  .sub { color: var(--sub); font-size: 13px; margin-bottom: 28px; line-height: 1.6; }
+  .search { display: flex; gap: 10px; }
+  .searchbox { position: relative; flex: 1; }
+  .searchbox .icon {
+    position: absolute; left: 16px; top: 50%; transform: translateY(-50%);
+    width: 17px; height: 17px; stroke: #d8a7c0; fill: none; stroke-width: 2;
+    stroke-linecap: round; pointer-events: none;
+  }
+  input {
+    width: 100%; padding: 14px 18px 14px 44px; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.85);
+    color: var(--text); font-size: 15px; outline: none;
+    box-shadow: 0 2px 10px rgba(242,109,157,.08);
+    transition: border-color .2s, box-shadow .2s;
+  }
+  input::placeholder { color: #cbaec0; }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(242,109,157,.12), 0 4px 14px rgba(242,109,157,.12); }
+  button {
+    padding: 14px 24px; border-radius: 999px; border: none;
+    background: linear-gradient(135deg, var(--accent-soft) 0%, var(--accent) 100%);
+    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(242,109,157,.28);
+    transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+  }
+  button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(242,109,157,.4); filter: brightness(1.04); }
+  button:active:not(:disabled) { transform: translateY(0); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.sec { background: rgba(255,255,255,.75); border: 1px solid rgba(242,109,157,.28); color: var(--accent); box-shadow: none; }
+  .meta { color: var(--sub); font-size: 13px; margin-top: 18px; min-height: 20px; }
+  .card {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--card);
+    border: 1px solid rgba(255,255,255,.65);
+    border-radius: 20px; padding: 14px 18px; margin-top: 14px;
+    box-shadow: 0 6px 22px rgba(242,109,157,.10), 0 2px 8px rgba(242,109,157,.06);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: transform .18s ease, box-shadow .18s ease;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(242,109,157,.18); }
+  .cover {
+    width: 56px; height: 76px; object-fit: cover; border-radius: 10px;
+    background: #ffe9f2; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(242,109,157,.18);
+    transition: transform .25s ease, box-shadow .25s ease;
+  }
+  .card:hover .cover { transform: scale(1.07); box-shadow: 0 4px 14px rgba(242,109,157,.28); }
+  .card .rank {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+    color: #fff; font-size: 13px; font-weight: 600;
+    box-shadow: 0 2px 6px rgba(242,109,157,.35);
+    margin-right: 8px; vertical-align: middle; flex-shrink: 0;
+  }
+  .card .name { font-size: 16px; font-weight: 600; vertical-align: middle; }
+  .card .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+  .card .badge.cold { background: rgba(242,109,157,.12); color: var(--accent); border: 1px solid rgba(242,109,157,.3); }
+  .card .badge.hot { background: rgba(179,154,168,.12); color: var(--sub); border: 1px solid rgba(179,154,168,.25); }
+  .card .hide {
+    margin-left: auto; flex-shrink: 0; width: 30px; height: 30px; padding: 0;
+    border-radius: 50%; border: 1px solid rgba(242,109,157,.22);
+    background: rgba(255,255,255,.6); color: var(--sub);
+    font-size: 14px; line-height: 1; cursor: pointer; opacity: .6; box-shadow: none;
+  }
+  .card .hide:hover { opacity: 1; color: var(--accent); border-color: rgba(242,109,157,.5); background: rgba(255,179,209,.25); }
+  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .autharea button { padding: 8px 14px; font-size: 13px; }
+  #userlabel { color: var(--sub); font-size: 13px; }
+  .tabs { display: flex; gap: 10px; margin-top: 20px; }
+  .tab {
+    flex: 1; padding: 11px 0; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.2); background: #fff7fa;
+    color: var(--accent); font-size: 14px; font-weight: 600;
+    cursor: pointer; text-align: center; box-shadow: none;
+  }
+  .tab.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent)); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(242,109,157,.3); }
+  .restore {
+    margin-top: 16px; border: 1px solid rgba(255,255,255,.65); border-radius: 20px;
+    background: var(--card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    padding: 14px 18px; box-shadow: 0 6px 22px rgba(242,109,157,.1);
+  }
+  .restore h3 { font-size: 13px; color: var(--sub); margin-bottom: 4px; font-weight: 600; }
+  .restore .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; font-size: 14px; }
+  .restore .row button { padding: 5px 12px; font-size: 12px; border-radius: 999px; background: rgba(255,255,255,.8); border: 1px solid rgba(242,109,157,.28); color: var(--accent); box-shadow: none; }
+  .restore .clear { display: block; margin-top: 8px; padding: 6px 14px; font-size: 12px; border-radius: 999px; background: rgba(255,255,255,.7); border: 1px solid rgba(242,109,157,.25); color: var(--sub); cursor: pointer; box-shadow: none; }
+  .restore .clear:hover { color: var(--accent); border-color: rgba(242,109,157,.5); }
+  .err { color: #e85f8d; font-size: 14px; margin-top: 16px; }
+  .hidden { display: none; }
+  /* 小屏适配 */
+  @media (max-width: 480px) {
+    .wrap { padding: 28px 14px 60px; }
+    h1 { font-size: 22px; }
+    .card { padding: 12px 14px; }
+    .cover { width: 48px; height: 66px; }
+  }
 </style>
 </head>
 <body>
+<div class="petals" id="petals" aria-hidden="true"></div>
 <div class="wrap">
   <div class="topbar">
     <div>
-      <h1>bgmlikes</h1>
+      <h1>🌸 bgmLikes</h1>
       <div class="sub">输入 Bangumi 用户名，获得个性化动画推荐 · <a href="https://bgm.tv" target="_blank" style="color:var(--accent)">bgm.tv</a></div>
     </div>
     <div id="autharea" class="autharea">
@@ -59,7 +159,10 @@
   </div>
 
   <div class="search">
-    <input id="q" placeholder="Bangumi 用户名（不是昵称，主页URL里的名字）" autocomplete="off" />
+    <div class="searchbox">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="16.5" y1="16.5" x2="21" y2="21"></line></svg>
+      <input id="q" placeholder="输入 Bangumi 用户名，获得樱花下的推荐" autocomplete="off" />
+    </div>
     <button id="go">推荐</button>
     <button id="export" class="sec" disabled>导出 JPG</button>
   </div>
@@ -317,7 +420,7 @@ refreshAuth().then(() => {
 
 /* ---- 导出 JPG（原生 canvas 手绘，零依赖） ---- */
 const FONT = '"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif';
-const COLORS = { bg:'#0f1115', card:'#1a1e26', text:'#e8eaf0', sub:'#9aa0ac', accent:'#5b8cff' };
+const COLORS = { bg:'#fff0f5', card:'#ffffff', text:'#5a4a56', sub:'#b39aa8', accent:'#f26d9d' };
 
 function preloadImage(url) {
   return new Promise(resolve => {
@@ -404,7 +507,7 @@ async function exportJpg() {
       if (covers[i]) {
         drawRoundedImage(ctx, covers[i], cx, cy, 56, 76, 8);
       } else {
-        ctx.fillStyle = '#11151c';
+        ctx.fillStyle = '#ffe3ee';
         roundRect(ctx, cx, cy, 56, 76, 8);
         ctx.fill();
         ctx.fillStyle = COLORS.sub;
@@ -452,6 +555,25 @@ async function exportJpg() {
 }
 
 exportBtn.addEventListener('click', exportJpg);
+
+/* ---- 樱花花瓣飘落（纯装饰，pointer-events:none 不挡交互） ---- */
+(function () {
+  const petalsEl = document.getElementById('petals');
+  if (!petalsEl) return;
+  const N = 22;
+  for (let i = 0; i < N; i++) {
+    const p = document.createElement('span');
+    p.className = 'petal';
+    const dur = (7 + Math.random() * 6).toFixed(2);       // 7~13s 一片
+    const size = (10 + Math.random() * 9).toFixed(1);     // 10~19px
+    p.style.cssText =
+      'left:' + (Math.random() * 100).toFixed(2) + '%;' +
+      '--size:' + size + 'px;' +
+      '--dur:' + dur + 's;' +
+      '--delay:-' + (Math.random() * dur).toFixed(2) + 's;';  // 负延迟：首屏即铺满花瓣
+    petalsEl.appendChild(p);
+  }
+})();
 </script>
 </body>
 </html>
