@@ -36,7 +36,11 @@ logger = logging.getLogger("bgmlikes")
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "collections.db"
 AUTH_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "auth.db"
 WEB_INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
+WEB_HOME = Path(__file__).resolve().parent.parent / "web" / "home.html"
+WEB_DAILY = Path(__file__).resolve().parent.parent / "web" / "daily.html"
 COVER_DIR = Path(__file__).resolve().parent.parent / "data" / "covers"
+
+CALENDAR_URL = "https://api.bgm.tv/calendar"
 
 
 def _cookie_max_age() -> int:
@@ -104,6 +108,24 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok", **recommender.stats()}
 
+    # ---- 每日放送：Bangumi 放送表代理（服务端取数，避免浏览器 CORS / 大陆直连超时）----
+    @app.get("/api/calendar")
+    def calendar_proxy() -> Response:
+        try:
+            resp = httpx.get(
+                CALENDAR_URL,
+                headers={"User-Agent": "bgmlikes/1.0", "Accept": "application/json"},
+                timeout=15,
+            )
+        except httpx.HTTPError as e:
+            logger.exception("拉取 Bangumi 放送表失败：%s", e)
+            raise HTTPException(status_code=502, detail=f"获取放送表失败：{e}")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502,
+                                detail=f"Bangumi 放送表返回 {resp.status_code}")
+        return Response(content=resp.content, media_type="application/json",
+                        headers={"Cache-Control": "public, max-age=1800"})
+
     # ---- OAuth 登录 ----
     @app.get("/auth/login")
     def auth_login(request: Request):
@@ -136,7 +158,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail="未能获取 Bangumi 用户名")
         auth.upsert_user(tok.user_id, username, tok)
         sess = auth.create_session(tok.user_id)
-        resp = RedirectResponse("/", status_code=302)
+        resp = RedirectResponse("/likes", status_code=302)
         _set_session_cookie(resp, sess.token,
                             secure=request.url.scheme == "https")
         resp.delete_cookie("oauth_state")
@@ -181,6 +203,30 @@ def create_app() -> FastAPI:
         if sess is None:
             raise HTTPException(status_code=401, detail="请先登录")
         auth.clear_hidden(sess.user_id)
+        return {"ok": True}
+
+    # ---- 每日放送隐藏（需登录；未登录 /daily 页隐藏功能禁用）----
+    @app.get("/daily/hidden")
+    def get_daily_hidden(request: Request) -> dict:
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        return {"hidden": sorted(auth.get_daily_hidden(sess.user_id))}
+
+    @app.post("/daily/hidden/{subject_id}")
+    def set_daily_hidden(request: Request, subject_id: int, body: HiddenIn) -> dict:
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        auth.set_daily_hidden(sess.user_id, subject_id, body.hidden)
+        return {"ok": True, "hidden": body.hidden, "subject_id": subject_id}
+
+    @app.delete("/daily/hidden")
+    def clear_daily_hidden(request: Request) -> dict:
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        auth.clear_daily_hidden(sess.user_id)
         return {"ok": True}
 
     @app.post("/v1/recommend", response_model=RecommendResponse)
@@ -248,10 +294,19 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/")
-    def index() -> FileResponse:
-        # no-cache：页面每次重新校验，避免浏览器缓存旧 HTML（前端字段会随 API 演进，
-        # 缓存过期页引用已删字段会崩出 "reading 'replace'" 类错误，2026-08-07 实测）。
+    def home() -> FileResponse:
+        # 主页：导航到 推荐系统(/likes) / 每日放送(/daily)
+        return FileResponse(WEB_HOME, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/likes")
+    def likes() -> FileResponse:
+        # 推荐系统页（原 index.html，改 /likes 前缀）
         return FileResponse(WEB_INDEX, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/daily")
+    def daily() -> FileResponse:
+        # 每日放送页
+        return FileResponse(WEB_DAILY, headers={"Cache-Control": "no-cache"})
 
     return app
 

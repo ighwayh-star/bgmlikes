@@ -236,3 +236,26 @@ class AuthStore:
                 "DELETE FROM preferences WHERE user_id=? AND action='hidden'",
                 (user_id,),
             )
+
+    # ---- 每日放送隐藏（同 preferences 表，action='daily_hidden'）----
+    def set_daily_hidden(self, user_id: int, subject_id: int, hidden: bool) -> None:
+        with self._conn() as conn:
+            if hidden:
+                conn.execute(
+                    "INSERT INTO preferences(user_id, subject_id, action, updated_at)"
+                    " VALUES(?,?,?,?) ON CONFLICT DO NOTHING",
+                    (user_id, subject_id, "daily_hidden", time.time()),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM preferences WHERE user_id=? AND subject_id=?"
+                    " AND action='daily_hidden'", (user_id, subject_id),
+                )
+
+    def get_daily_hidden(self, user_id: int) -> set[int]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT subject_id FROM preferences WHERE user_id=? AND action='daily_hidden'",
+                (user_id,),
+            ).fetchall()
+        return {r[0] for r in rows}

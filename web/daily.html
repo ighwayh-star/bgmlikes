@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bgmLikes · 每日放送</title>
+<style>
+  :root {
+    --bg1: #fff0f5; --bg2: #fff8fb;
+    --card: rgba(255,255,255,.72);
+    --line: rgba(242,109,157,.18);
+    --text: #4a3f4e; --sub: #b39aa8;
+    --accent: #f26d9d; --accent-soft: #ffb3d1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+    color: var(--text);
+    font-family: "SimHei","Heiti SC","Microsoft YaHei","PingFang SC",sans-serif;
+    min-height: 100vh;
+  }
+  .petals { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  .petal {
+    position: absolute; top: -8vh; left: 0;
+    width: var(--size, 14px); height: var(--size, 14px);
+    background: radial-gradient(circle at 32% 32%, #ffe3f0, #ffb3d1 55%, #ff8fb8);
+    border-radius: 78% 22% 76% 24% / 62% 40% 60% 38%;
+    opacity: 0;
+    box-shadow: 0 0 6px rgba(242,109,157,.15);
+    animation: petal-fall var(--dur, 10s) linear var(--delay, 0s) infinite;
+  }
+  @keyframes petal-fall {
+    0%   { transform: translate3d(0, -6vh, 0) rotate(0deg); opacity: 0; }
+    8%   { opacity: .9; }
+    25%  { transform: translate3d(26px, 24vh, 0) rotate(96deg); opacity: .9; }
+    50%  { transform: translate3d(-20px, 50vh, 0) rotate(190deg); opacity: .85; }
+    75%  { transform: translate3d(24px, 76vh, 0) rotate(286deg); opacity: .7; }
+    100% { transform: translate3d(-12px, 108vh, 0) rotate(360deg); opacity: 0; }
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 34px 20px 80px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 { font-size: 24px; color: #e85f8d; letter-spacing: 1px;
+    text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35); }
+  .brand a.home { font-size: 13px; color: var(--sub); text-decoration: none; }
+  .brand a.home:hover { color: var(--accent); }
+  .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  button { padding: 9px 16px; border-radius: 999px; border: none;
+    background: linear-gradient(135deg, var(--accent-soft), var(--accent)); color: #fff;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(242,109,157,.28);
+    transition: transform .18s, box-shadow .18s; font-family: inherit; }
+  button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(242,109,157,.4); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.sec { background: rgba(255,255,255,.75); border: 1px solid rgba(242,109,157,.28); color: var(--accent); box-shadow: none; }
+  #userlabel { color: var(--sub); font-size: 13px; }
+
+  .tabs { display: flex; gap: 10px; margin-bottom: 16px; }
+  .tab { flex: 1; text-align: center; padding: 11px 0; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.2); background: #fff7fa; color: var(--accent);
+    font-size: 15px; font-weight: 600; cursor: pointer; }
+  .tab.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent)); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(242,109,157,.3); }
+
+  .meta { color: var(--sub); font-size: 14px; margin-bottom: 12px; min-height: 20px; }
+  .err { color: #e85f8d; font-size: 14px; margin-bottom: 12px; }
+
+  .card {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--card); border: 1px solid rgba(255,255,255,.65);
+    border-radius: 16px; padding: 11px 16px; margin-bottom: 10px;
+    box-shadow: 0 4px 16px rgba(242,109,157,.08);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: transform .18s, box-shadow .18s, opacity .18s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(242,109,157,.16); }
+  .card.hidden-card { opacity: .45; filter: grayscale(.3); }
+.card--checked { border-color: var(--accent); background: rgba(255,179,209,.22); }
+  .cover { width: 44px; height: 60px; object-fit: cover; border-radius: 8px;
+    background: #ffe9f2; flex-shrink: 0; box-shadow: 0 2px 8px rgba(242,109,157,.18); }
+  .info { flex: 1; min-width: 0; }
+  .name-cn { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name-ja { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .meta-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+  .rating { font-size: 13px; font-weight: 700; color: #f5a623; background: rgba(245,166,35,.08);
+    padding: 1px 6px; border-radius: 99px; }
+  .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .act-btn { width: 30px; height: 30px; padding: 0; border-radius: 50%; display: inline-flex;
+    align-items: center; justify-content: center; font-size: 14px; cursor: pointer;
+    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.6); box-shadow: none; }
+  .act-btn:hover:not(:disabled) { transform: none; border-color: rgba(242,109,157,.5); }
+  .act-search { color: rgba(35,155,230,.75); }
+  .act-search:hover:not(:disabled) { background: rgba(35,155,230,.12); }
+  .act-hide { color: var(--sub); }
+  .act-hide:hover:not(:disabled) { background: rgba(255,179,209,.25); color: var(--accent); }
+
+  .day-sec { margin-bottom: 18px; }
+  .day-head { display: flex; align-items: center; gap: 8px; padding: 8px 2px 6px; font-weight: 700; font-size: 17px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot--1{background:#F8829E}.dot--2{background:#E8A87C}.dot--3{background:#F5C842}.dot--4{background:#6BCB77}.dot--5{background:#4D96FF}.dot--6{background:#9B72F2}.dot--7{background:#F07080}
+  .day-count { font-size: 13px; color: var(--sub); font-weight: 500; }
+  .new-badge { font-size: 10px; color: #E8688A; background: rgba(232,104,138,.1); padding: 1px 6px; border-radius: 99px; }
+
+  .hidden-sec { margin-top: 8px; border-top: 1px solid rgba(242,109,157,.1); padding-top: 8px; }
+  .hidden-head { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--sub); }
+  .footer { padding: 10px 2px 16px; text-align: center; font-size: 13px; color: var(--sub); }
+  .footer a { color: var(--accent); text-decoration: none; }
+  .season-bar { display: flex; align-items: center; gap: 8px; padding: 4px 2px 12px; flex-wrap: wrap; }
+  .season-bar button { font-size: 13px; padding: 7px 14px; }
+  .empty { text-align: center; color: var(--sub); padding: 28px 0; font-size: 15px; }
+  .hidden { display: none; }
+  .login-hint { font-size: 13px; color: var(--sub); margin-bottom: 12px; text-align: center; }
+  .login-hint a { color: var(--accent); }
+  @media (max-width: 480px) {
+    .wrap { padding: 24px 14px 60px; }
+    .card { padding: 9px 12px; }
+    .name-cn { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div class="petals" id="petals" aria-hidden="true"></div>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <h1>📺 每日放送</h1>
+      <a class="home" href="/likes">🎯 推荐系统</a>
+    </div>
+    <div id="autharea" class="autharea">
+      <button id="loginbtn" class="sec hidden">登录 (Bangumi)</button>
+      <span id="userlabel" class="hidden"></span>
+      <button id="logoutbtn" class="sec hidden">退出</button>
+    </div>
+  </div>
+
+  <div id="meta" class="meta"></div>
+  <div class="tabs">
+    <div id="tabDaily" class="tab active">每日</div>
+    <div id="tabSeason" class="tab">本季全览</div>
+  </div>
+  <div id="loginHint" class="login-hint hidden">登录后可在每日放送中隐藏不喜欢的新番</div>
+  <div id="err" class="err hidden"></div>
+  <div id="content"></div>
+  <div class="footer">数据来源 <a href="https://bgm.tv" target="_blank" rel="noopener">Bangumi</a></div>
+</div>
+
+<script>
+'use strict';
+
+// ---- 元素 & 状态 ----
+const loginBtn = document.getElementById('loginbtn');
+const logoutBtn = document.getElementById('logoutbtn');
+const userLabel = document.getElementById('userlabel');
+const meta = document.getElementById('meta');
+const err = document.getElementById('err');
+const content = document.getElementById('content');
+const tabDaily = document.getElementById('tabDaily');
+const tabSeason = document.getElementById('tabSeason');
+const loginHint = document.getElementById('loginHint');
+
+let calendarData = null;   // 放送表（7 天）
+let hiddenIds = [];        // 已隐藏的 subject 集合（登录后从服务端拉取）
+let loggedIn = false;
+let me = null;
+let tab = 'daily';         // 'daily' | 'season'
+let selectMode = false;
+let selectedIds = new Set();
+
+// ---- 星期换算（Bangumi weekday.id: 1=周一..7=周日；JS getDay: 0=周日..6=周六）----
+function jsDayToBangumi(jsDay) { return jsDay === 0 ? 7 : jsDay; }
+function getTodayId() { return jsDayToBangumi(new Date().getDay()); }
+function getYesterdayId() { const t = getTodayId(); return t === 1 ? 7 : t - 1; }
+const WEEKDAY_NAMES = { 1:'周一',2:'周二',3:'周三',4:'周四',5:'周五',6:'周六',7:'周日' };
+function formatDateShort(d) { return (d.getMonth()+1) + '月' + d.getDate() + '日'; }
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---- 数据归一化（同 dm normalizeAnimeItem）----
+function normalizeAnime(item) {
+  return {
+    id: item.id,
+    name: item.name || '',
+    nameCn: item.name_cn || item.name || '',
+    images: item.images || {},
+    rating: item.rating || { score: 0, total: 0 },
+    url: item.url || 'https://bgm.tv/subject/' + item.id,
+  };
+}
+function getByWeekday(data, weekdayId) {
+  const day = (data || []).find(d => d.weekday && d.weekday.id === weekdayId);
+  return (day && day.items || []).map(normalizeAnime);
+}
+
+// ---- 登录态 ----
+async function refreshAuth() {
+  try {
+    const r = await fetch('/auth/me');
+    const d = await r.json();
+    loggedIn = !!d.logged_in;
+    if (loggedIn) {
+      me = d.username;
+      userLabel.textContent = me;
+      userLabel.classList.remove('hidden');
+      loginBtn.classList.add('hidden');
+      logoutBtn.classList.remove('hidden');
+      await loadHidden();
+    } else {
+      me = null; hiddenIds = [];
+      userLabel.classList.add('hidden');
+      logoutBtn.classList.add('hidden');
+      loginBtn.classList.remove('hidden');
+    }
+    refreshLoginUI();
+    render();
+  } catch (e) {
+    loggedIn = false; me = null;
+    loginBtn.classList.remove('hidden');
+    refreshLoginUI();
+  }
+}
+
+function refreshLoginUI() {
+  loginHint.classList.toggle('hidden', loggedIn);
+}
+
+async function loadHidden() {
+  try {
+    const r = await fetch('/daily/hidden');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    hiddenIds = d.hidden || [];
+  } catch (e) { hiddenIds = []; }
+}
+
+// ---- 隐藏 / 取消隐藏（需登录）----
+async function toggleHide(id) {
+  if (!loggedIn) { alert('请先登录后再隐藏新番'); return; }
+  const toHide = !hiddenIds.includes(id);
+  try {
+    const r = await fetch('/daily/hidden/' + id, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hidden: toHide}),
+    });
+    if (r.status === 401) {
+      await refreshAuth();
+      alert('登录已过期，请重新登录');
+      return;
+    }
+    if (!r.ok) { alert('保存失败，请重试'); return; }
+    if (toHide) hiddenIds.push(id); else hiddenIds = hiddenIds.filter(x => x !== id);
+    render();
+  } catch (e) { alert('网络错误，请重试'); }
+}
+
+// ---- 数据加载（经服务端代理 /api/calendar，避 CORS）----
+async function loadData(force) {
+  meta.textContent = '加载中…';
+  err.classList.add('hidden');
+  try {
+    let data = null;
+    if (!force) {
+      try {
+        const cached = sessionStorage.getItem('bgmlikes_calendar');
+        if (cached) { const c = JSON.parse(cached); if (Date.now() - c.t < 60*60*1000) data = c.data; }
+      } catch (e) {}
+    }
+    if (!data) {
+      const r = await fetch('/api/calendar');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+      try { sessionStorage.setItem('bgmlikes_calendar', JSON.stringify({t: Date.now(), data})); } catch (e) {}
+      meta.textContent = '';
+    }
+    if (!Array.isArray(data)) throw new Error('数据格式异常');
+    calendarData = data;
+    render();
+  } catch (e) {
+    err.classList.remove('hidden');
+    err.textContent = '加载失败：' + (e.message || e) + '，请重试';
+    meta.textContent = '';
+  }
+}
+
+// ---- 渲染 ----
+function render() {
+  if (!calendarData) return;
+  if (tab === 'daily') renderDaily();
+  else renderSeason();
+}
+
+function renderDaily() {
+  const todayId = getTodayId();
+  const yesterdayId = getYesterdayId();
+  const todayRaw = getByWeekday(calendarData, todayId);
+  const yesterdayRaw = getByWeekday(calendarData, yesterdayId);
+  const filter = a => !hiddenIds.includes(a.id);
+  const todayVis = todayRaw.filter(filter);
+  const yesterdayVis = yesterdayRaw.filter(filter);
+  const todayHid = todayRaw.filter(a => hiddenIds.includes(a.id));
+  const yesterdayHid = yesterdayRaw.filter(a => hiddenIds.includes(a.id));
+
+  const today = new Date();
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+
+  let html = '';
+  html += makeDaySection('昨天', yesterdayId, yesterdayVis, formatDateShort(yesterday), false);
+  html += makeDaySection('今天', todayId, todayVis, formatDateShort(today), true);
+
+  const allHidden = [...todayHid, ...yesterdayHid];
+  if (allHidden.length > 0) {
+    html += '<div class="hidden-sec">';
+    html += '<div class="hidden-head">已隐藏 (' + allHidden.length + ')</div>';
+    html += '<div style="margin-top:6px">' + allHidden.map(a => makeCard(a, true)).join('') + '</div>';
+    html += '</div>';
+  }
+
+  if (!html) html = '<div class="empty">今天暂无放送</div>';
+  content.innerHTML = html;
+  bindCardEvents(content);
+}
+
+function makeDaySection(title, weekdayId, items, dateStr, isToday) {
+  if (items.length === 0) return '';
+  return '<div class="day-sec"><div class="day-head">' +
+    '<span class="dot dot--' + weekdayId + '"></span>' +
+    title + ' ' + (WEEKDAY_NAMES[weekdayId] || '') + ' · ' + dateStr +
+    (isToday ? ' <span class="new-badge">NEW</span>' : '') +
+    ' <span class="day-count">' + items.length + '部</span></div>' +
+    '<div>' + items.map(a => makeCard(a, false)).join('') + '</div></div>';
+}
+
+function makeCard(anime, isHidden) {
+  const cover = (anime.images && (anime.images.grid || anime.images.small)) || '';
+  const score = anime.rating && anime.rating.score ? anime.rating.score.toFixed(1) : '';
+  const cls = isHidden ? ' hidden-card' : '';
+  const hideIcon = isHidden ? '👁🗨' : '👁';
+  const hideTitle = isHidden ? '取消隐藏' : '隐藏';
+  return '<div class="card' + cls + '" data-id="' + anime.id + '" data-url="' + escapeHtml(anime.url) + '">' +
+    '<img class="cover" src="' + escapeHtml(cover) + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+    '<div class="info">' +
+      '<div class="name-cn">' + escapeHtml(anime.nameCn) + '</div>' +
+      (anime.name !== anime.nameCn ? '<div class="name-ja">' + escapeHtml(anime.name) + '</div>' : '') +
+      '<div class="meta-row">' + (score ? '<span class="rating">⭐ ' + score + '</span>' : '') + '</div>' +
+    '</div>' +
+    '<div class="actions">' +
+      '<button class="act-btn act-search" data-action="search" title="B站搜索">🔍</button>' +
+      '<button class="act-btn act-hide" data-action="hide" title="' + hideTitle + '">' + hideIcon + '</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function bindCardEvents(container) {
+  container.querySelectorAll('.card').forEach(card => {
+    const id = parseInt(card.dataset.id);
+    const url = card.dataset.url;
+    card.onclick = (e) => {
+      if (e.target.closest('[data-action]')) return;
+      if (selectMode) {
+        selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id);
+        card.classList.toggle('card--checked', selectedIds.has(id));
+        updateSeasonBar();
+      } else if (url) {
+        window.open(url, '_blank');
+      }
+    };
+    const searchBtn = card.querySelector('[data-action="search"]');
+    if (searchBtn) searchBtn.onclick = (e) => {
+      e.stopPropagation();
+      const name = card.querySelector('.name-cn').textContent;
+      window.open('https://search.bilibili.com/all?keyword=' + encodeURIComponent(name), '_blank');
+    };
+    const hideBtn = card.querySelector('[data-action="hide"]');
+    if (hideBtn) hideBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleHide(id);
+    };
+  });
+}
+
+// ---- 本季全览 ----
+function renderSeason() {
+  const barHTML = selectMode
+    ? '<div class="season-bar">' +
+        '<span style="font-size:13px;color:var(--sub)">已选 <b>' + selectedIds.size + '</b> 部</span>' +
+        '<button class="sec" onclick="void(0)" data-sel="visible">选中未隐藏</button>' +
+        '<button class="sec" onclick="void(0)" data-sel="hidden">选中已隐藏</button>' +
+        '<button class="sec" onclick="void(0)" data-sel="hide" disabled>隐藏选中</button>' +
+        '<button class="sec" onclick="void(0)" data-sel="unhide" disabled>取消隐藏</button>' +
+        '<button class="sec" onclick="void(0)" data-sel="exit">退出选择</button>' +
+      '</div>'
+    : '<div class="season-bar"><button onclick="void(0)" data-sel="enter">📋 选择模式（批量隐藏）</button></div>';
+
+  let html = barHTML;
+  (calendarData || []).forEach(day => {
+    const wd = day.weekday;
+    if (!wd || !day.items || day.items.length === 0) return;
+    const vis = day.items.filter(a => !hiddenIds.includes(a.id));
+    const hid = day.items.filter(a => hiddenIds.includes(a.id));
+    const all = [...vis, ...hid];
+    if (all.length === 0) return;
+    html += '<div class="day-sec"><div class="day-head">' +
+      '<span class="dot dot--' + wd.id + '"></span>' +
+      (WEEKDAY_NAMES[wd.id] || wd.cn || '') +
+      ' <span class="day-count">' + all.length + '部</span></div>' +
+      '<div>' + all.map(a => makeCard(normalizeAnime(a), hiddenIds.includes(a.id))).join('') + '</div></div>';
+  });
+  if (!(calendarData || []).some(d => d.items && d.items.length)) html += '<div class="empty">本季暂无放送</div>';
+  content.innerHTML = html;
+  bindCardEvents(content);
+  bindSeasonEvents(content);
+}
+
+function bindSeasonEvents(container) {
+  const click = (sel, fn) => {
+    const b = container.querySelector('[data-sel="' + sel + '"]');
+    if (b) b.onclick = fn;
+  };
+  click('enter', () => { selectMode = true; selectedIds.clear(); render(); });
+  click('exit', () => { selectMode = false; selectedIds.clear(); render(); });
+  click('visible', () => {
+    container.querySelectorAll('.card:not(.hidden-card)').forEach(c => selectedIds.add(parseInt(c.dataset.id)));
+    render();
+  });
+  click('hidden', () => {
+    container.querySelectorAll('.card.hidden-card').forEach(c => selectedIds.add(parseInt(c.dataset.id)));
+    render();
+  });
+  click('hide', () => bulkHide());
+  click('unhide', () => bulkUnhide());
+  updateSeasonBar();
+}
+
+function updateSeasonBar() {
+  const hiddenCount = [...selectedIds].filter(id => hiddenIds.includes(id)).length;
+  const visCount = selectedIds.size - hiddenCount;
+  const hideBtn = content.querySelector('[data-sel="hide"]');
+  const unhideBtn = content.querySelector('[data-sel="unhide"]');
+  if (hideBtn) hideBtn.disabled = visCount === 0;
+  if (unhideBtn) unhideBtn.disabled = hiddenCount === 0;
+  const b = content.querySelector('.season-bar b');
+  if (b) b.textContent = selectedIds.size;
+}
+
+async function bulkHide() {
+  const toHide = [...selectedIds].filter(id => !hiddenIds.includes(id));
+  let failed = false;
+  for (const id of toHide) {
+    try {
+      const r = await fetch('/daily/hidden/' + id, { method: 'POST',
+        headers: {'Content-Type':'application/json'}, body: JSON.stringify({hidden:true}) });
+      if (r.status === 401) { await refreshAuth(); alert('登录已过期'); return; }
+      if (!r.ok) { failed = true; continue; }
+      if (!hiddenIds.includes(id)) hiddenIds.push(id);
+    } catch (e) { failed = true; }
+  }
+  selectedIds.clear();
+  if (failed) alert('部分保存失败，请重试');
+  render();
+}
+
+async function bulkUnhide() {
+  const toUnhide = [...selectedIds].filter(id => hiddenIds.includes(id));
+  let failed = false;
+  for (const id of toUnhide) {
+    try {
+      const r = await fetch('/daily/hidden/' + id, { method: 'POST',
+        headers: {'Content-Type':'application/json'}, body: JSON.stringify({hidden:false}) });
+      if (r.status === 401) { await refreshAuth(); alert('登录已过期'); return; }
+      if (!r.ok) { failed = true; continue; }
+      hiddenIds = hiddenIds.filter(x => x !== id);
+    } catch (e) { failed = true; }
+  }
+  selectedIds.clear();
+  if (failed) alert('部分保存失败，请重试');
+  render();
+}
+
+// ---- 事件 ----
+tabDaily.onclick = () => { tab = 'daily'; selectMode = false; selectedIds.clear();
+  tabDaily.classList.add('active'); tabSeason.classList.remove('active'); render(); };
+tabSeason.onclick = () => { tab = 'season'; selectMode = false; selectedIds.clear();
+  tabSeason.classList.add('active'); tabDaily.classList.remove('active'); render(); };
+loginBtn.addEventListener('click', () => { window.location = '/auth/login'; });
+logoutBtn.addEventListener('click', async () => {
+  try { await fetch('/auth/logout', {method:'POST'}); } catch (e) {}
+  window.location.reload();
+});
+
+// ---- 启动 ----
+refreshAuth().then(() => loadData());
+(function () {
+  const el = document.getElementById('petals');
+  if (!el) return;
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('span');
+    p.className = 'petal';
+    const dur = (7 + Math.random() * 6).toFixed(2);
+    const size = (10 + Math.random() * 9).toFixed(1);
+    p.style.cssText = 'left:' + (Math.random() * 100).toFixed(2) + '%;' +
+      '--size:' + size + 'px;--dur:' + dur + 's;--delay:-' + (Math.random() * dur).toFixed(2) + 's;';
+    el.appendChild(p);
+  }
+})();
+</script>
+</body>
+</html>

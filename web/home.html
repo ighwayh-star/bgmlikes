@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bgmLikes · 首页</title>
+<style>
+  :root {
+    --bg1: #fff0f5; --bg2: #fff8fb;
+    --card: rgba(255,255,255,.72);
+    --line: rgba(242,109,157,.18);
+    --text: #4a3f4e; --sub: #b39aa8;
+    --accent: #f26d9d; --accent-soft: #ffb3d1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+    color: var(--text);
+    font-family: "SimHei","Heiti SC","Microsoft YaHei","PingFang SC",sans-serif;
+    min-height: 100vh;
+  }
+  .petals { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  .petal {
+    position: absolute; top: -8vh; left: 0;
+    width: var(--size, 14px); height: var(--size, 14px);
+    background: radial-gradient(circle at 32% 32%, #ffe3f0, #ffb3d1 55%, #ff8fb8);
+    border-radius: 78% 22% 76% 24% / 62% 40% 60% 38%;
+    opacity: 0;
+    box-shadow: 0 0 6px rgba(242,109,157,.15);
+    animation: petal-fall var(--dur, 10s) linear var(--delay, 0s) infinite;
+  }
+  @keyframes petal-fall {
+    0%   { transform: translate3d(0, -6vh, 0) rotate(0deg); opacity: 0; }
+    8%   { opacity: .9; }
+    25%  { transform: translate3d(26px, 24vh, 0) rotate(96deg); opacity: .9; }
+    50%  { transform: translate3d(-20px, 50vh, 0) rotate(190deg); opacity: .85; }
+    75%  { transform: translate3d(24px, 76vh, 0) rotate(286deg); opacity: .7; }
+    100% { transform: translate3d(-12px, 108vh, 0) rotate(360deg); opacity: 0; }
+  }
+  .wrap {
+    position: relative; z-index: 1; max-width: 760px; margin: 0 auto;
+    padding: 52px 20px 80px; text-align: center;
+  }
+  h1 { font-size: 34px; color: #e85f8d; letter-spacing: 2px; margin-bottom: 10px;
+    text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35); }
+  .tagline { color: var(--sub); font-size: 15px; margin-bottom: 40px; line-height: 1.7; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .entry {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--card); border: 1px solid rgba(255,255,255,.65);
+    border-radius: 20px; padding: 32px 24px;
+    box-shadow: 0 6px 22px rgba(242,109,157,.10), 0 2px 8px rgba(242,109,157,.06);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  .entry:hover { transform: translateY(-4px); box-shadow: 0 14px 34px rgba(242,109,157,.2); }
+  .entry .emoji { font-size: 44px; margin-bottom: 14px; }
+  .entry h2 { font-size: 22px; color: #e85f8d; margin-bottom: 8px; }
+  .entry p { color: var(--sub); font-size: 14px; line-height: 1.6; }
+  @media (max-width: 560px) {
+    .grid { grid-template-columns: 1fr; }
+    h1 { font-size: 27px; }
+  }
+</style>
+</head>
+<body>
+<div class="petals" id="petals" aria-hidden="true"></div>
+<div class="wrap">
+  <h1>🌸 bgmLikes</h1>
+  <div class="tagline">你的 Bangumi 动画助手</div>
+  <div class="grid">
+    <a class="entry" href="/likes">
+      <div class="emoji">🎯</div>
+      <h2>推荐系统</h2>
+      <p>输入用户名，获得个性化动画推荐，发现冷门佳作</p>
+    </a>
+    <a class="entry" href="/daily">
+      <div class="emoji">📺</div>
+      <h2>每日放送</h2>
+      <p>追踪今天 / 昨天更新的番剧，查看本季全览</p>
+    </a>
+  </div>
+</div>
+<script>
+(function () {
+  const el = document.getElementById('petals');
+  if (!el) return;
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('span');
+    p.className = 'petal';
+    const dur = (7 + Math.random() * 6).toFixed(2);
+    const size = (10 + Math.random() * 9).toFixed(1);
+    p.style.cssText = 'left:' + (Math.random() * 100).toFixed(2) + '%;' +
+      '--size:' + size + 'px;--dur:' + dur + 's;--delay:-' + (Math.random() * dur).toFixed(2) + 's;';
+    el.appendChild(p);
+  }
+})();
+</script>
+</body>
+</html>
