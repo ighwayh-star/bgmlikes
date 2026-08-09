@@ -17,7 +17,8 @@
   body {
     background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
     color: var(--text);
-    font-family: "Yu Gothic Rounded","Yu Gothic","Hiragino Maru Gothic ProN","Varela Round","PingFang SC","Microsoft YaHei",sans-serif;
+    font-family: "SimHei","Heiti SC","Microsoft YaHei","PingFang SC",sans-serif;
+    font-size: 17px;
     min-height: 100vh;
     overflow-x: hidden;
   }
@@ -42,10 +43,10 @@
   }
   .wrap { position: relative; z-index: 1; max-width: 640px; margin: 0 auto; padding: 40px 20px 80px; }
   h1 {
-    font-size: 26px; margin-bottom: 4px; color: #e85f8d; letter-spacing: 1px;
+    font-size: 28px; margin-bottom: 4px; color: #e85f8d; letter-spacing: 1px;
     text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35);
   }
-  .sub { color: var(--sub); font-size: 13px; margin-bottom: 28px; line-height: 1.6; }
+  .sub { color: var(--sub); font-size: 14px; margin-bottom: 28px; line-height: 1.6; }
   .search { display: flex; gap: 10px; }
   .searchbox { position: relative; flex: 1; }
   .searchbox .icon {
@@ -56,7 +57,7 @@
   input {
     width: 100%; padding: 14px 18px 14px 44px; border-radius: 999px;
     border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.85);
-    color: var(--text); font-size: 15px; outline: none;
+    color: var(--text); font-size: 16px; outline: none;
     box-shadow: 0 2px 10px rgba(242,109,157,.08);
     transition: border-color .2s, box-shadow .2s;
   }
@@ -65,7 +66,7 @@
   button {
     padding: 14px 24px; border-radius: 999px; border: none;
     background: linear-gradient(135deg, var(--accent-soft) 0%, var(--accent) 100%);
-    color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+    color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
     box-shadow: 0 4px 14px rgba(242,109,157,.28);
     transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
   }
@@ -73,7 +74,7 @@
   button:active:not(:disabled) { transform: translateY(0); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.sec { background: rgba(255,255,255,.75); border: 1px solid rgba(242,109,157,.28); color: var(--accent); box-shadow: none; }
-  .meta { color: var(--sub); font-size: 13px; margin-top: 18px; min-height: 20px; }
+  .meta { color: var(--sub); font-size: 14px; margin-top: 18px; min-height: 20px; }
   .card {
     display: flex; align-items: center; gap: 14px;
     background: var(--card);
@@ -99,17 +100,31 @@
     box-shadow: 0 2px 6px rgba(242,109,157,.35);
     margin-right: 8px; vertical-align: middle; flex-shrink: 0;
   }
-  .card .name { font-size: 16px; font-weight: 600; vertical-align: middle; }
+  .card .name { flex: 1; min-width: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
   .card .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
   .card .badge.cold { background: rgba(242,109,157,.12); color: var(--accent); border: 1px solid rgba(242,109,157,.3); }
   .card .badge.hot { background: rgba(179,154,168,.12); color: var(--sub); border: 1px solid rgba(179,154,168,.25); }
   .card .hide {
-    margin-left: auto; flex-shrink: 0; width: 30px; height: 30px; padding: 0;
+    flex-shrink: 0; width: 30px; height: 30px; padding: 0;
     border-radius: 50%; border: 1px solid rgba(242,109,157,.22);
     background: rgba(255,255,255,.6); color: var(--sub);
     font-size: 14px; line-height: 1; cursor: pointer; opacity: .6; box-shadow: none;
   }
   .card .hide:hover { opacity: 1; color: var(--accent); border-color: rgba(242,109,157,.5); background: rgba(255,179,209,.25); }
+  /* 条目右侧外链：Bangumi 条目页 / Bilibili 搜索 */
+  .card .links { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
+  .card .link {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 30px; padding: 0 10px; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.6);
+    font-size: 12px; font-weight: 600; text-decoration: none;
+    opacity: .8; transition: opacity .15s, transform .15s, background .15s;
+  }
+  .card .link:hover { opacity: 1; transform: translateY(-1px); }
+  .card .link-bgm { color: #7c8cf8; border-color: rgba(124,140,248,.32); }
+  .card .link-bgm:hover { background: rgba(124,140,248,.12); }
+  .card .link-bili { color: #fb7299; border-color: rgba(251,114,153,.32); }
+  .card .link-bili:hover { background: rgba(251,114,153,.12); }
   .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   .autharea button { padding: 8px 14px; font-size: 13px; }
@@ -140,6 +155,7 @@
     h1 { font-size: 22px; }
     .card { padding: 12px 14px; }
     .cover { width: 48px; height: 66px; }
+    .card .link { padding: 0 8px; font-size: 11px; }
   }
 </style>
 </head>
@@ -305,6 +321,10 @@ function renderList() {
     <div class="card">
       <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
       <span class="rank">${i + 1}</span><span class="name">${escapeHtml(r.name ?? '')}</span>
+      <div class="links">
+        <a class="link link-bgm" href="https://bgm.tv/subject/${r.subject_id}" target="_blank" rel="noopener" title="在 Bangumi 打开条目">BGM</a>
+        <a class="link link-bili" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(r.name ?? '')}" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画">B站</a>
+      </div>
       ${self ? `<button class="hide" data-sid="${r.subject_id}" title="不感兴趣">✕</button>` : ''}
     </div>`).join('');
   renderRestore();
@@ -419,7 +439,7 @@ refreshAuth().then(() => {
 });
 
 /* ---- 导出 JPG（原生 canvas 手绘，零依赖） ---- */
-const FONT = '"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif';
+const FONT = '"SimHei","Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif';
 const COLORS = { bg:'#fff0f5', card:'#ffffff', text:'#5a4a56', sub:'#b39aa8', accent:'#f26d9d' };
 
 function preloadImage(url) {
