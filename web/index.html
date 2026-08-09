@@ -307,8 +307,13 @@ logoutBtn.addEventListener('click', async () => {
   window.location.reload();
 });
 
-// 页面载入：恢复登录态 + 拉"不感兴趣"
-refreshAuth();
+// 页面载入：恢复登录态 + 拉"不感兴趣"；已登录则自动搜索自己的推荐
+refreshAuth().then(() => {
+  if (loggedIn) {
+    q.value = me;
+    recommend();
+  }
+});
 
 /* ---- 导出 JPG（原生 canvas 手绘，零依赖） ---- */
 const FONT = '"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif';
