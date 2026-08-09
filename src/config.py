@@ -32,3 +32,21 @@ def load_token() -> str:
             "并写入 BGM_TOKEN=<你的令牌>。令牌在 https://next.bgm.tv/demo/access-token 生成。"
         )
     return token
+
+
+def load_optional(key: str, default: str = "") -> str:
+    """读取可选配置项（OAuth client/secret/session 等）；未设置返回 default，不报错。
+
+    这样 OAuth 未配置时服务能正常启动，仅登录功能显示"未启用"。
+    """
+    _load_env_file()
+    return os.environ.get(key, default).strip()
+
+
+def oauth_configured() -> bool:
+    """OAuth 是否已配置（client_id/secret/redirect 三件齐才算可用）。"""
+    return bool(
+        load_optional("OAUTH_CLIENT_ID")
+        and load_optional("OAUTH_CLIENT_SECRET")
+        and load_optional("OAUTH_REDIRECT_URI")
+    )

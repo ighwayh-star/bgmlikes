@@ -1,0 +1,8 @@
+# bgmlikes 反向代理：自动 HTTPS
+# 替换 <your-domain> 为你的真实域名（如 bgmhiway.asia）
+# 部署时执行：sudo caddy validate --config Caddyfile 校验，然后 `sudo systemctl restart caddy`
+
+bgmhiway.asia {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8000
+}

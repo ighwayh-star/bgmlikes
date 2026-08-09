@@ -26,8 +26,20 @@ class Recommendation:
     subject_id: int
     name: str
     score: float
-    cold: bool = False  # 冷门配额条目（热度排名 > cold_rank_threshold），供前端"冷门发现"角标
+    cold: bool = False  # 该条目是否来自冷门池（热度排名 > cold_rank_threshold）
     popularity_rank: int = 0  # 全局热度排名（1 = 最热门）
+
+
+@dataclass(frozen=True)
+class RecommendResult:
+    """两区推荐结果（2026-08-08 产品改版，不再混合配额）。
+
+    normal: 动画推荐区——非冷门池（rank ≤ cold_rank_threshold）的 CF 高分 top-k；
+    cold:   冷门发现区——冷门池（rank > cold_rank_threshold）的 CF 高分 top-k。
+    两区各自独立取 top-k，互不混合。
+    """
+    normal: list[Recommendation]
+    cold: list[Recommendation]
 
 
 def score_items(
@@ -320,11 +332,14 @@ class Recommender:
         profile: list[CollectionEntry],
         already_collected: set[int],
         k: int = 20,
-    ) -> list[Recommendation]:
-        """给目标用户推荐 top-K。
+    ) -> RecommendResult:
+        """给目标用户返回两区推荐（各 top-K，见 RecommendResult）。
 
         profile: 目标用户"看过且评分"的收藏（口味信号）
         already_collected: 目标用户全部收藏的 subject_id（过滤候选）
+
+        两区共用同一份 CF 分与过滤（排除已看 / franchise 排除+去重 / nsfw），
+        仅按热度池子切分：normal=非冷门池、cold=冷门池，各自取 CF 分最高的 k 条。
         """
         # 口味信号：排除四分以下（rate ≤ taste_min_rate 不算正信号，2026-08-08），
         # 评分作为权重（q[i]=idf[i]*rate）。franchise 排除与 nsfw 判断仍用全部 profile。
@@ -366,25 +381,27 @@ class Recommender:
                 best[r] = (scores[i], i)
         cand = [v[1] for v in best.values()]
 
-        top = quota_rank(
-            scores,
-            self._pop_rank,
-            self._cold_quota,
-            self._cold_rank_threshold,
-            cand,
-            k,
-        )
+        # 两区切分（2026-08-08 产品改版，替代 quota_rank 混合）：
+        #   normal = 非冷门池（rank ≤ 阈值）CF 高分 top-k
+        #   cold   = 冷门池（rank > 阈值）CF 高分 top-k
+        normal_pool = [i for i in cand if self._pop_rank[i] <= self._cold_rank_threshold]
+        cold_pool = [i for i in cand if self._pop_rank[i] > self._cold_rank_threshold]
+        top_normal = sorted(normal_pool, key=lambda i: -scores[i])[:k]
+        top_cold = sorted(cold_pool, key=lambda i: -scores[i])[:k]
 
-        return [
-            Recommendation(
+        def _rec(i: int, cold: bool) -> Recommendation:
+            return Recommendation(
                 subject_id=self._items[i],
                 name=self.subject_meta[self._items[i]]["name"],
                 score=float(scores[i]),
-                cold=bool(self._pop_rank[i] > self._cold_rank_threshold),
+                cold=cold,
                 popularity_rank=int(self._pop_rank[i]),
             )
-            for i in top
-        ]
+
+        return RecommendResult(
+            normal=[_rec(i, False) for i in top_normal],
+            cold=[_rec(i, True) for i in top_cold],
+        )
 
     def stats(self) -> dict:
         return {

@@ -1,7 +1,10 @@
-"""测量"推荐列表变冷了吗"：纯 CF vs franchise vs 产品路径 的热度分布对比。
+"""测量"推荐变冷了吗"：纯 CF vs franchise vs 产品两区 的热度分布对比。
 
-用户反馈"热门推荐没有以前热门"。此脚本在同一批评估用户上比较三条路径
-top-20 的热度特征（popularity_rank / fav_done），把"变冷"拆解到 franchise 与配额。
+用户反馈"推荐别全是热门"。产品 2026-08-08 改版为两区（动画推荐/冷门发现）。
+此脚本在同一批评估用户上比较 top-20 的热度特征（popularity_rank / fav_done）：
+- cf = 纯 CF（对应"没做冷门处理"的记忆）
+- fr = 仅 franchise 排除+去重（不加池子切分）
+- normal / cold = 产品两区（动画区=非冷门池、冷门区=冷门池）
 
 用法（项目根目录）：python -m scripts.measure_hotness --users 500
 """
@@ -18,12 +21,11 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
-from src.recommender import Recommender, encode_profile, quota_rank, score_items
+from src.recommender import Recommender, encode_profile, score_items
 from scripts.evaluate import load, MIN_TRAIN
 
 DB = "data/collections.db"
 K = 20
-COLD_QUOTA = 8
 COLD_THRESHOLD = 3000
 SEED = 42
 
@@ -45,8 +47,8 @@ def main() -> None:
     sample = [eval_users[int(i)] for i in pick]
 
     # 每条路径收集：所有 top-20 条目的 popularity_rank 与 fav_done
-    ranks = {"cf": [], "fr": [], "product": []}
-    favs = {"cf": [], "fr": [], "product": []}
+    ranks = {"cf": [], "fr": [], "normal": [], "cold": []}
+    favs = {"cf": [], "fr": [], "normal": [], "cold": []}
     n_ok = 0
     for eu in sample:
         train = [s for s in eu["train"] if s in iidx]
@@ -71,16 +73,20 @@ def main() -> None:
                 best[rr] = (scores[i], i)
         cand = [v[1] for v in best.values()]
         top_fr = sorted(cand, key=lambda i: -scores[i])[:K]
-        top_prod = quota_rank(scores, r._pop_rank, COLD_QUOTA, COLD_THRESHOLD, cand, K)
+        # 产品两区（与 recommend() 同源）：normal=非冷门池、cold=冷门池
+        top_normal = sorted((i for i in cand if r._pop_rank[i] <= COLD_THRESHOLD),
+                            key=lambda i: -scores[i])[:K]
+        top_cold = sorted((i for i in cand if r._pop_rank[i] > COLD_THRESHOLD),
+                          key=lambda i: -scores[i])[:K]
 
-        for name, top in [("cf", top_cf), ("fr", top_fr), ("product", top_prod)]:
+        for name, top in [("cf", top_cf), ("fr", top_fr), ("normal", top_normal), ("cold", top_cold)]:
             ranks[name].extend(r._pop_rank[top].tolist())
             favs[name].extend(r._pop[top].tolist())
         n_ok += 1
 
-    print(f"\n[结果] {n_ok} 用户，k={K}，配额 {COLD_QUOTA}/{K} 冷门（rank>{COLD_THRESHOLD}）", flush=True)
+    print(f"\n[结果] {n_ok} 用户，k={K}，冷门 = 热度排名 > {COLD_THRESHOLD}", flush=True)
     print(f"{'路径':<10}{'中位rank':>10}{'平均fav':>12}{'rank≤1000':>12}{'rank≤3000':>12}{'冷门>3000':>12}")
-    for name in ["cf", "fr", "product"]:
+    for name in ["cf", "fr", "normal", "cold"]:
         rk = np.array(ranks[name])
         fv = np.array(favs[name])
         pct = lambda cond: f"{cond.mean()*100:>12.1f}%"  # noqa: E731
@@ -89,9 +95,9 @@ def main() -> None:
             f"{pct(rk <= 1000)}{pct(rk <= COLD_THRESHOLD)}{pct(rk > COLD_THRESHOLD)}",
             flush=True,
         )
-    print("\n说明：rank 越小越热门（1=全站最热）。产品 = franchise + 配额；fr = 仅 franchise（不加配额）；")
-    print("cf = 纯 CF（对应你记忆里的'以前'）。产品 vs cf 的差异 = 总变冷；fr vs cf = franchise 份额；")
-    print("product vs fr = 配额份额。")
+    print("\n说明：rank 越小越热门（1=全站最热）。fr = 仅 franchise 排除+去重；normal/cold = 产品两区；")
+    print("cf = 纯 CF（对应'没做冷门处理'的记忆）。normal 应几乎全部 rank≤3000，cold 应几乎全部 >3000，")
+    print("二者之和即'变冷'的两个去向；fr vs cf 展示 franchise 的贡献。")
 
 
 if __name__ == "__main__":

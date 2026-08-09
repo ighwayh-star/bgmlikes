@@ -1,5 +1,6 @@
 # 密钥
 .env
+*.pem
 
 # Python
 __pycache__/
@@ -16,3 +17,6 @@ experiments/
 
 # 原型（抛弃式，不入库）
 scripts/proto_*.py
+
+# 打包产物（不入库）
+*.tar.gz

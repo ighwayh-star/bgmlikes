@@ -1,0 +1,17 @@
+[Unit]
+Description=bgmlikes Bangumi recommendation API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/bgmlikes
+ExecStart=/opt/bgmlikes/venv/bin/uvicorn src.api:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+# 从项目根 .env 读取配置（src/config.py 内手写解析）
+EnvironmentFile=/opt/bgmlikes/.env
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

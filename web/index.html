@@ -25,14 +25,38 @@
   .card .badge { display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:999px; margin-left:8px; vertical-align:middle; }
   .card .badge.cold { background:rgba(91,140,255,.15); color:var(--accent); border:1px solid rgba(91,140,255,.35); }
   .card .badge.hot { background:rgba(154,160,172,.12); color:var(--sub); border:1px solid rgba(154,160,172,.25); }
+  .card .hide { margin-left:auto; flex-shrink:0; width:28px; height:28px; padding:0; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--sub); font-size:14px; line-height:1; cursor:pointer; opacity:.55; }
+  .card .hide:hover { opacity:1; color:#fff; border-color:rgba(255,107,107,.6); background:rgba(255,107,107,.15); }
+  .topbar { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .autharea { display:flex; align-items:center; gap:8px; white-space:nowrap; }
+  .autharea button { padding:8px 14px; font-size:13px; }
+  #userlabel { color:var(--sub); font-size:13px; }
+  .tabs { display:flex; gap:8px; margin-top:20px; }
+  .tab { flex:1; padding:10px 0; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--sub); font-size:14px; cursor:pointer; text-align:center; }
+  .tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .restore { margin-top:16px; border:1px solid var(--line); border-radius:12px; background:var(--card); padding:12px 16px; }
+  .restore h3 { font-size:13px; color:var(--sub); margin-bottom:4px; font-weight:600; }
+  .restore .row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; font-size:14px; }
+  .restore .row button { padding:4px 10px; font-size:12px; border-radius:8px; }
+  .restore .clear { display:block; margin-top:8px; padding:6px 12px; font-size:12px; border-radius:8px; background:transparent; border:1px solid var(--line); color:var(--sub); cursor:pointer; }
+  .restore .clear:hover { color:#ff6b6b; border-color:rgba(255,107,107,.5); }
   .err { color:#ff6b6b; font-size:14px; margin-top:16px; }
   .hidden { display:none; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>bgmlikes</h1>
-  <div class="sub">输入 Bangumi 用户名，获得个性化动画推荐 · <a href="https://bgm.tv" target="_blank" style="color:var(--accent)">bgm.tv</a></div>
+  <div class="topbar">
+    <div>
+      <h1>bgmlikes</h1>
+      <div class="sub">输入 Bangumi 用户名，获得个性化动画推荐 · <a href="https://bgm.tv" target="_blank" style="color:var(--accent)">bgm.tv</a></div>
+    </div>
+    <div id="autharea" class="autharea">
+      <button id="loginbtn" class="sec hidden">登录 (Bangumi)</button>
+      <span id="userlabel" class="hidden"></span>
+      <button id="logoutbtn" class="sec hidden">退出</button>
+    </div>
+  </div>
 
   <div class="search">
     <input id="q" placeholder="Bangumi 用户名（不是昵称，主页URL里的名字）" autocomplete="off" />
@@ -40,25 +64,83 @@
     <button id="export" class="sec" disabled>导出 JPG</button>
   </div>
 
+  <div id="tabs" class="tabs hidden">
+    <button class="tab active" data-tab="normal">动画推荐</button>
+    <button class="tab" data-tab="cold">冷门发现</button>
+  </div>
+
   <div id="meta" class="meta"></div>
   <div id="err" class="err hidden"></div>
   <div id="list"></div>
+  <div id="restore" class="restore hidden"></div>
 </div>
 
 <script>
 const q = document.getElementById('q');
 const go = document.getElementById('go');
 const exportBtn = document.getElementById('export');
+const loginBtn = document.getElementById('loginbtn');
+const logoutBtn = document.getElementById('logoutbtn');
+const userLabel = document.getElementById('userlabel');
+const tabs = document.getElementById('tabs');
 const meta = document.getElementById('meta');
 const err = document.getElementById('err');
 const list = document.getElementById('list');
+const restore = document.getElementById('restore');
 let lastData = null;
+let activeTab = 'normal';  // 'normal' 动画推荐 / 'cold' 冷门发现
+let hidden = new Map();    // sid -> name（登录后从服务端加载的"不感兴趣"）
+let loggedIn = false;      // 是否已登录（隐藏功能的前提）
+
+// ---- 登录态 ----
+async function refreshAuth() {
+  try {
+    const r = await fetch('/auth/me');
+    const d = await r.json();
+    loggedIn = !!d.logged_in;
+    if (loggedIn) {
+      userLabel.textContent = d.username;
+      loginBtn.classList.add('hidden');
+      logoutBtn.classList.remove('hidden');
+      userLabel.classList.remove('hidden');
+      await loadHiddenServer();
+    } else {
+      hidden.clear();
+      userLabel.classList.add('hidden');
+      logoutBtn.classList.add('hidden');
+      loginBtn.classList.remove('hidden');
+    }
+    renderList();
+    updateMeta();
+  } catch (e) {
+    loggedIn = false;
+    loginBtn.classList.remove('hidden');
+  }
+}
+
+async function loadHiddenServer() {
+  try {
+    const r = await fetch('/preferences/hidden');
+    if (!r.ok) return;
+    const d = await r.json();
+    hidden = new Map();
+    // 名字暂未知（需 subject 名），用空，恢复区可显示 subject_id；到渲染时再从 lastData 补名
+    (d.hidden || []).forEach(sid => hidden.set(sid, ''));
+    // 从当前推荐列表补齐名字（便于恢复区显示）
+    (lastData ? (lastData.normal || []).concat(lastData.cold || []) : []).forEach(rr => {
+      if (hidden.has(rr.subject_id)) hidden.set(rr.subject_id, rr.name);
+    });
+  } catch (e) {}
+}
 
 async function recommend() {
   const username = q.value.trim();
   if (!username) return;
   err.classList.add('hidden');
   list.innerHTML = '';
+  restore.classList.add('hidden');
+  restore.innerHTML = '';
+  tabs.classList.add('hidden');
   meta.textContent = '正在拉取用户数据…';
   go.disabled = true;
   exportBtn.disabled = true;
@@ -66,7 +148,8 @@ async function recommend() {
     const res = await fetch('/v1/recommend', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username, k: 20})
+      // k=40：推荐池 40 部，隐藏某条后由池内下一位替补（前端显示前 20）
+      body: JSON.stringify({username, k: 40})
     });
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
@@ -74,15 +157,14 @@ async function recommend() {
     }
     const d = await res.json();
     lastData = d;
+    activeTab = 'normal';
+    // 已登录：重新从服务端拉"不感兴趣"（比上次推荐时的可能新增），并补当前列表名
+    if (loggedIn) await loadHiddenServer();
+    tabs.classList.remove('hidden');
+    [...tabs.children].forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
     exportBtn.disabled = false;
-    meta.textContent = `${d.username} 的推荐（${d.count} 条 · 冷门角标 = 热度前12%之外）`;
-    if (d.source === 'cache') meta.textContent += ' · ⚠ 本地缓存（Bangumi 暂不可达）';
-    list.innerHTML = (d.recommendations || []).map((r, i) => `
-      <div class="card">
-        <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
-        <span class="rank">${i + 1}</span><span class="name">${escapeHtml(r.name ?? '')}</span>
-        <span class="badge ${r.cold ? 'cold' : 'hot'}">${r.cold ? '冷门发现' : '热门'}</span>
-      </div>`).join('');
+    updateMeta();
+    renderList();
   } catch (e) {
     err.classList.remove('hidden');
     err.textContent = e.message;
@@ -92,12 +174,129 @@ async function recommend() {
   }
 }
 
+// 当前 tab 对应的推荐池（40 条，来自 API；前端保持"哑"）
+function allRecs() {
+  if (!lastData) return [];
+  return activeTab === 'cold' ? (lastData.cold || []) : (lastData.normal || []);
+}
+
+// 可见列表：过滤掉"不感兴趣"的，取前 20 条——隐藏后空位由池内下一位替补
+function visibleRecs() {
+  return allRecs().filter(r => !hidden.has(r.subject_id)).slice(0, 20);
+}
+
+function renderList() {
+  list.innerHTML = visibleRecs().map((r, i) => `
+    <div class="card">
+      <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
+      <span class="rank">${i + 1}</span><span class="name">${escapeHtml(r.name ?? '')}</span>
+      <button class="hide" data-sid="${r.subject_id}" title="不感兴趣">✕</button>
+    </div>`).join('');
+  renderRestore();
+}
+
+function updateMeta() {
+  if (!lastData) { meta.textContent = ''; return; }
+  const d = lastData;
+  let t = `${d.username} 的推荐（${activeTab === 'cold' ? '冷门发现' : '动画推荐'} ${visibleRecs().length} 条`;
+  if (hidden.size) t += ` · 已隐藏 ${hidden.size} 条`;
+  t += '）';
+  if (d.source === 'cache') t += ' · ⚠ 本地缓存（Bangumi 暂不可达）';
+  meta.textContent = t;
+}
+
+// 误操作兜底：展开"已隐藏"列表，可单项恢复 / 清空全部
+function renderRestore() {
+  if (!hidden.size) { restore.classList.add('hidden'); restore.innerHTML = ''; return; }
+  restore.classList.remove('hidden');
+  restore.innerHTML = `
+    <h3>已隐藏 ${hidden.size} 条（不感兴趣）</h3>
+    ${[...hidden].map(([sid, name]) => `
+      <div class="row">
+        <span>${escapeHtml(name || '未知')}</span>
+        <button class="sec" data-resid="${sid}">恢复</button>
+      </div>`).join('')}
+    <button class="clear">清空全部</button>`;
+}
+
 function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 go.addEventListener('click', recommend);
 q.addEventListener('keydown', e => { if (e.key === 'Enter') recommend(); });
+tabs.addEventListener('click', e => {
+  const b = e.target.closest('.tab');
+  if (!b) return;
+  activeTab = b.dataset.tab;
+  [...tabs.children].forEach(t => t.classList.toggle('active', t === b));
+  renderList();
+  updateMeta();
+});
+// 隐藏/恢复都需登录：未登录提示"请先登录"，不修改任何内容
+async function toggleHidden(sid, toHide) {
+  if (!loggedIn) {
+    alert('请先登录后才能隐藏/恢复动画');
+    return;
+  }
+  try {
+    const r = await fetch('/preferences/hidden/' + sid, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hidden: toHide}),
+    });
+    if (r.status === 401) {
+      await refreshAuth();  // 会话过期：回到未登录态
+      alert('登录已过期，请重新登录');
+      return;
+    }
+    if (!r.ok) { alert('保存失败，请重试'); return; }
+    if (toHide) {
+      const rec = allRecs().find(x => x.subject_id === sid);
+      hidden.set(sid, rec ? rec.name : '');
+    } else {
+      hidden.delete(sid);
+    }
+    updateMeta();
+    renderList();
+  } catch (e) { alert('网络错误，请重试'); }
+}
+
+// 隐藏（"不感兴趣"）点击 → 服务端存 → 列表过滤补位
+list.addEventListener('click', e => {
+  const b = e.target.closest('.hide');
+  if (!b || !lastData) return;
+  toggleHidden(Number(b.dataset.sid), true);
+});
+// 恢复：单项恢复 / 清空全部
+restore.addEventListener('click', e => {
+  const b = e.target.closest('[data-resid]');
+  if (b) toggleHidden(Number(b.dataset.resid), false);
+  else if (e.target.classList.contains('clear')) clearAllHidden();
+  else return;
+});
+
+async function clearAllHidden() {
+  if (!loggedIn) { alert('请先登录'); return; }
+  try {
+    const r = await fetch('/preferences/hidden', {method: 'DELETE'});
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('清空失败，请重试'); return; }
+    hidden.clear();
+    updateMeta();
+    renderList();
+  } catch (e) { alert('网络错误，请重试'); }
+}
+
+// ---- 登录 / 退出 ----
+loginBtn.addEventListener('click', () => { window.location = '/auth/login'; });
+logoutBtn.addEventListener('click', async () => {
+  try { await fetch('/auth/logout', {method: 'POST'}); } catch (e) {}
+  window.location.reload();
+});
+
+// 页面载入：恢复登录态 + 拉"不感兴趣"
+refreshAuth();
 
 /* ---- 导出 JPG（原生 canvas 手绘，零依赖） ---- */
 const FONT = '"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif';
@@ -149,7 +348,10 @@ function ellipsis(ctx, text, maxWidth) {
 }
 
 async function exportJpg() {
-  const recs = lastData && lastData.recommendations;
+  const data = lastData;
+  if (!data) return;
+  const isCold = activeTab === 'cold';  // 导出当前 tab 所在区域
+  const recs = visibleRecs();  // 导出当前看到的（已过滤"不感兴趣"）列表
   if (!recs || !recs.length) return;
   exportBtn.disabled = true;
   try {
@@ -169,10 +371,10 @@ async function exportJpg() {
     ctx.fillStyle = COLORS.bg;  // JPG 无透明，先铺满
     ctx.fillRect(0, 0, W, H);
 
-    // 顶部标题：{用户名} 的动画推荐
+    // 顶部标题：{用户名} 的动画推荐 / 冷门发现（按当前 tab）
     ctx.fillStyle = COLORS.text;
     ctx.font = 'bold 28px ' + FONT;
-    ctx.fillText((lastData.username || '') + ' 的动画推荐', PAD, 60);
+    ctx.fillText((data.username || '') + (isCold ? ' 的冷门发现' : ' 的动画推荐'), PAD, 60);
 
     const now = new Date();
     const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
@@ -212,13 +414,13 @@ async function exportJpg() {
       }
     });
 
-    const safeName = (lastData.username || 'user').replace(/[\\/:*?"<>|\s]/g, '_');
+    const safeName = (data.username || 'user').replace(/[\\/:*?"<>|\s]/g, '_');
     canvas.toBlob(blob => {
       if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'bgmlikes-' + safeName + '-' + dateStr + '.jpg';
+        a.download = 'bgmlikes-' + safeName + (isCold ? '-cold' : '') + '-' + dateStr + '.jpg';
         document.body.appendChild(a);
         a.click();
         a.remove();
