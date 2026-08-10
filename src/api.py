@@ -13,6 +13,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
@@ -50,15 +51,18 @@ def _cookie_max_age() -> int:
 def _set_session_cookie(response: Response, token: str, *, secure: bool) -> None:
     response.set_cookie(
         SESSION_COOKIE, token, max_age=_cookie_max_age(),
-        httponly=True, samesite="lax",
+        httponly=True, samesite="none",
         # secure 由请求协议决定：https 请求置 secure，http（本机/反代被 Caddy 转 https）
         # 不置——反代到 Caddy 后始终 https。本机 http 调试也不受影响。
+        # samesite="none"：让 dailyanimation 扩展/widget（cross-site 源）能携带会话 cookie，
+        # 复用站点的 Bangumi 登录态同步隐藏列表。必须与 Secure 同用（https 下满足）。
         secure=secure,
     )
 
 
 def _clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE)
+    # samesite 必须与登录时一致（SameSite=None），否则部分浏览器不按此路径清除
+    response.delete_cookie(SESSION_COOKIE, samesite="none")
 
 
 def _session_from_request(request: Request, auth: AuthStore) -> Session | None:
@@ -103,6 +107,17 @@ def create_app() -> FastAPI:
     logger.info("oauth logged: %s", oauth_configured())
 
     app = FastAPI(title="bgmlikes", version="0.1")
+
+    # CORS：只对 dailyanimation widget 的运行源 https://bgm.tv 放行（跨站复用站点登录同步
+    # 隐藏列表）。allow_credentials=True 不能配通配 origin；MV3 扩展有 host_permissions 绕过 CORS，
+    # 故这里只服务 widget 的 fetch。同源站点 /likes /daily 不受影响。
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["https://bgm.tv"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type"],
+    )
 
     @app.get("/v1/health")
     def health() -> dict:
