@@ -145,6 +145,7 @@
     cursor: pointer; text-align: center; box-shadow: none;
   }
   .tab.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent)); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(242,109,157,.3); }
+  .shuffle-btn { flex: 0 0 auto; padding: 9px 16px; font-size: 13px; }
   .restore {
     margin-top: 16px; border: 1px solid rgba(255,255,255,.65); border-radius: 20px;
     background: var(--card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -196,6 +197,7 @@
   <div id="tabs" class="tabs hidden">
     <button class="tab active" data-tab="normal">动画推荐</button>
     <button class="tab" data-tab="cold">冷门发现</button>
+    <button id="shuffle" class="sec shuffle-btn" title="从推荐池重新随机选 20 部">🎲 换一批</button>
   </div>
 
   <div id="meta" class="meta"></div>
@@ -441,6 +443,15 @@ tabs.addEventListener('click', e => {
   if (!b) return;
   activeTab = b.dataset.tab;
   [...tabs.children].forEach(t => t.classList.toggle('active', t === b));
+  renderList();
+  updateMeta();
+});
+// 换一批：从当前推荐池重新加权随机选 20 部替换列表（上次展示过的条目权重 ×0.1 → 基本不重复）
+const shuffleBtn = document.getElementById('shuffle');
+shuffleBtn.addEventListener('click', () => {
+  if (!lastData) return;
+  resampleTab(activeTab);
+  persistShown();
   renderList();
   updateMeta();
 });
