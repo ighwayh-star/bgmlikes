@@ -41,11 +41,15 @@
 
   .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 34px 20px 80px; }
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
-  .brand { display: flex; align-items: baseline; gap: 10px; }
-  .brand h1 { font-size: 24px; color: #e85f8d; letter-spacing: 1px;
-    text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35); }
-  .brand a.home { font-size: 13px; color: var(--sub); text-decoration: none; }
-  .brand a.home:hover { color: var(--accent); }
+  .brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .brand-link {
+    font-size: 26px; font-weight: 700; color: #e85f8d; letter-spacing: 1px; text-decoration: none;
+    text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35);
+  }
+  .brand-link:hover { text-shadow: 0 0 22px rgba(242,109,157,.5), 0 0 40px rgba(255,179,209,.5); }
+  .nav-link { font-size: 13px; color: var(--sub); text-decoration: none; }
+  .nav-link:hover { color: var(--accent); }
+  .nav-link.active { color: var(--accent); font-weight: 600; }
   .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   button { padding: 9px 16px; border-radius: 999px; border: none;
     background: linear-gradient(135deg, var(--accent-soft), var(--accent)); color: #fff;
@@ -114,6 +118,7 @@
   .login-hint a { color: var(--accent); }
   @media (max-width: 480px) {
     .wrap { padding: 24px 14px 60px; }
+    .brand-link { font-size: 22px; }
     .card { padding: 9px 12px; }
     .name-cn { font-size: 15px; }
   }
@@ -124,8 +129,9 @@
 <div class="wrap">
   <div class="topbar">
     <div class="brand">
-      <h1>📺 每日放送</h1>
-      <a class="home" href="/likes">🎯 推荐系统</a>
+      <a class="brand-link" href="/" title="返回主页">🌸 bgmLikes</a>
+      <a class="nav-link" href="/likes">🎯 推荐系统</a>
+      <a class="nav-link active" href="/daily">📺 每日放送</a>
     </div>
     <div id="autharea" class="autharea">
       <button id="loginbtn" class="sec hidden">登录 (Bangumi)</button>

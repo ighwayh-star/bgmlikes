@@ -42,11 +42,16 @@
     100% { transform: translate3d(-12px, 108vh, 0) rotate(360deg); opacity: 0; }
   }
   .wrap { position: relative; z-index: 1; max-width: 640px; margin: 0 auto; padding: 40px 20px 80px; }
-  h1 {
-    font-size: 28px; margin-bottom: 4px; color: #e85f8d; letter-spacing: 1px;
+  .brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .brand-link {
+    font-size: 26px; font-weight: 700; color: #e85f8d; letter-spacing: 1px; text-decoration: none;
     text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35);
   }
-  .sub { color: var(--sub); font-size: 14px; margin-bottom: 28px; line-height: 1.6; }
+  .brand-link:hover { text-shadow: 0 0 22px rgba(242,109,157,.5), 0 0 40px rgba(255,179,209,.5); }
+  .nav-link { font-size: 13px; color: var(--sub); text-decoration: none; }
+  .nav-link:hover { color: var(--accent); }
+  .nav-link.active { color: var(--accent); font-weight: 600; }
+  .sub { color: var(--sub); font-size: 14px; margin-top: 14px; margin-bottom: 24px; line-height: 1.6; }
   .search { display: flex; gap: 10px; }
   .searchbox { position: relative; flex: 1; }
   .searchbox .icon {
@@ -128,7 +133,7 @@
   .card .link-bgm:hover { background: rgba(124,140,248,.12); }
   .card .link-bili { color: #fb7299; border-color: rgba(251,114,153,.32); }
   .card .link-bili:hover { background: rgba(251,114,153,.12); }
-  .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   .autharea button { padding: 8px 14px; font-size: 13px; }
   #userlabel { color: var(--sub); font-size: 13px; }
@@ -155,7 +160,7 @@
   /* 小屏适配 */
   @media (max-width: 480px) {
     .wrap { padding: 28px 14px 60px; }
-    h1 { font-size: 22px; }
+    .brand-link { font-size: 22px; }
     .card { padding: 12px 14px; }
     .cover { width: 48px; height: 66px; }
     .card .link { padding: 0 6px; }
@@ -166,9 +171,10 @@
 <div class="petals" id="petals" aria-hidden="true"></div>
 <div class="wrap">
   <div class="topbar">
-    <div>
-      <h1>🌸 bgmLikes</h1>
-      <div class="sub">输入 Bangumi 用户名，获得个性化动画推荐 · <a href="https://bgm.tv" target="_blank" style="color:var(--accent)">bgm.tv</a></div>
+    <div class="brand">
+      <a class="brand-link" href="/" title="返回主页">🌸 bgmLikes</a>
+      <a class="nav-link active" href="/likes">🎯 推荐系统</a>
+      <a class="nav-link" href="/daily">📺 每日放送</a>
     </div>
     <div id="autharea" class="autharea">
       <button id="loginbtn" class="sec hidden">登录 (Bangumi)</button>
@@ -176,6 +182,7 @@
       <button id="logoutbtn" class="sec hidden">退出</button>
     </div>
   </div>
+  <div class="sub">输入 Bangumi 用户名，获得个性化动画推荐 · <a href="https://bgm.tv" target="_blank" style="color:var(--accent)">bgm.tv</a></div>
 
   <div class="search">
     <div class="searchbox">
