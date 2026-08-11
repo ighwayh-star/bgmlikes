@@ -245,10 +245,10 @@ class Recommender:
     def _load(self, db_path: str | Path) -> None:
         conn = sqlite3.connect(str(db_path))
 
-        # 条目元数据（名称 + 公共标签 + 流行度 + nsfw）
+        # 条目元数据（名称 + 公共标签 + 流行度 + nsfw + 首播日）
         self.subject_meta: dict[int, dict] = {}
-        for sid, name, name_cn, meta_tags, fav_done, nsfw in conn.execute(
-            "SELECT id, name, name_cn, meta_tags, fav_done, nsfw FROM subjects"
+        for sid, name, name_cn, meta_tags, fav_done, nsfw, date in conn.execute(
+            "SELECT id, name, name_cn, meta_tags, fav_done, nsfw, date FROM subjects"
         ):
             self.subject_meta[sid] = {
                 "name": name_cn or name,
@@ -257,6 +257,7 @@ class Recommender:
                 "meta_tags": json.loads(meta_tags) if meta_tags else [],
                 "fav_done": int(fav_done or 0),
                 "nsfw": bool(nsfw),
+                "date": date,
             }
 
         # 语料交互：rate>0 收藏（阶段 1.5 验证的强信号），1-10 评分加权（2026-08-08 ADR 0005）。
@@ -296,6 +297,16 @@ class Recommender:
 
         # franchise：同一部动画的不同季/续作/剧场版/番外（见 build_franchise 与 docs/adr/0003）
         self._franchise_root = build_franchise(self._items, conn)
+        # franchise 内"第一部"：组内最早首播日(date) 的条目；全部缺日期则最小 subject_id 兜底。
+        # 用于推荐时把续作/剧场版替换为系列第一部（2026-08-11 产品要求）。
+        first_by_root: dict[int, int] = {}
+        members_by_root: dict[int, list[int]] = {}
+        for sid, root in self._franchise_root.items():
+            members_by_root.setdefault(root, []).append(sid)
+        for root, members in members_by_root.items():
+            dated = [(self.subject_meta[s]["date"], s) for s in members
+                     if self.subject_meta[s]["date"]]
+            first_by_root[root] = min(dated)[1] if dated else min(members)
         conn.close()
 
         # 评分加权 IDF 交互矩阵 + 行归一化（A[u,i]=idf[i]*rate；rate 为 1-10 分值）。
@@ -317,6 +328,14 @@ class Recommender:
         # 与物品索引对齐的 franchise 根（孤立条目以自身为根，保证去重时互不干扰）
         self._fr = np.array(
             [self._franchise_root.get(sid, sid) for sid in self._items],
+            dtype=np.int64,
+        )
+        # 与物品索引对齐的"系列第一部"索引（孤立条目即自身）——续作替换用
+        self._first_idx = np.array(
+            [
+                self._iidx[first_by_root.get(self._franchise_root.get(sid, sid), sid)]
+                for sid in self._items
+            ],
             dtype=np.int64,
         )
         # 与物品索引对齐的 nsfw 标记（无 nsfw 口味时不推黄片，见 recommend）
@@ -357,10 +376,11 @@ class Recommender:
             knn=self._knn,
         )
 
-        # 排除"已看动画的续作/剧场版"：用户看过的 franchise 其余成员不进候选。
-        # （用户明确要求：已看的动画续作不要出现在推荐里，2026-08-07）
-        watched_roots = {
-            self._franchise_root.get(e.subject_id, e.subject_id) for e in profile
+        # 排除用户收藏过（任意状态：看过/在看/想看）的 franchise：该系列的续作/剧场版
+        # 都不进候选。2026-08-07 要求"已看续作别推"；2026-08-11 升级为"收藏过任一部即
+        # 排除整系列"，覆盖看过未打分、在看、想看等状态（无职转生 Part 2 一类漏网不再出现）。
+        collected_roots = {
+            self._franchise_root.get(sid, sid) for sid in already_collected
         }
         # nsfw 保守默认：profile 无 nsfw 口味时，候选过滤黄片（纯黄片用户不受影响）
         profile_nsfw = any(
@@ -369,7 +389,7 @@ class Recommender:
         cand = [
             i for i in range(len(self._items))
             if self._items[i] not in already_collected
-            and int(self._fr[i]) not in watched_roots
+            and int(self._fr[i]) not in collected_roots
             and (profile_nsfw or not self._nsfw[i])
         ]
         # franchise 去重：每个 franchise 只保留 CF 分最高的一条，续作/剧场版不重复占位。
@@ -379,7 +399,18 @@ class Recommender:
             r = int(self._fr[i])
             if r not in best or scores[i] > best[r][0]:
                 best[r] = (scores[i], i)
-        cand = [v[1] for v in best.values()]
+        # 续作替换：组内 CF 分最高的那条若是续作/剧场版（非第一部），换成该系列第一部。
+        # 仅当第一部仍是合法候选（未被收藏、非黄片）时替换，否则保留原条目。
+        # 2026-08-11 产品要求：列表里出现的续作都换成第一部。
+        cand = []
+        for r, (_, i) in best.items():
+            fi = int(self._first_idx[i])
+            if (fi != i
+                    and self._items[fi] not in already_collected
+                    and (profile_nsfw or not self._nsfw[fi])):
+                cand.append(fi)
+            else:
+                cand.append(i)
 
         # 两区切分（2026-08-08 产品改版，替代 quota_rank 混合）：
         #   normal = 非冷门池（rank ≤ 阈值）CF 高分 top-k
