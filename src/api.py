@@ -40,6 +40,7 @@ WEB_INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
 WEB_HOME = Path(__file__).resolve().parent.parent / "web" / "home.html"
 WEB_DAILY = Path(__file__).resolve().parent.parent / "web" / "daily.html"
 COVER_DIR = Path(__file__).resolve().parent.parent / "data" / "covers"
+PICS_DIR = Path(__file__).resolve().parent.parent / "pics"  # 发帖用截图直链（本地不上 git）
 
 CALENDAR_URL = "https://api.bgm.tv/calendar"
 
@@ -322,6 +323,14 @@ def create_app() -> FastAPI:
     def daily() -> FileResponse:
         # 每日放送页
         return FileResponse(WEB_DAILY, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/pics/{filename}")
+    def pics(filename: str) -> FileResponse:
+        """发帖用截图直链：/pics/<filename>（只服务 pics/ 目录内文件，防路径穿越）。"""
+        target = (PICS_DIR / filename).resolve()
+        if PICS_DIR.resolve() not in target.parents or not target.is_file():
+            raise HTTPException(status_code=404, detail="图片不存在")
+        return FileResponse(target, headers={"Cache-Control": "public, max-age=86400"})
 
     return app
 
