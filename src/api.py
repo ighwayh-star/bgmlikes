@@ -250,8 +250,8 @@ def create_app() -> FastAPI:
         username = req.username.strip()
         if not username:
             raise HTTPException(status_code=400, detail="username 不能为空")
-        if not (1 <= req.k <= 100):
-            raise HTTPException(status_code=400, detail="k 须在 1~100 之间")
+        if not (1 <= req.k <= 300):
+            raise HTTPException(status_code=400, detail="k 须在 1~300 之间")
 
         data_source = "api"
         try:
