@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -346,6 +347,22 @@ class Recommender:
 
     # ---- 对外接口 ------------------------------------------------
 
+    @staticmethod
+    def _current_season_window() -> tuple[str, str]:
+        """当前新番季 [起, 止) 的 ISO 日期（新番季对齐 1/4/7/10 月）。
+
+        用于从冷门池剔除当季新番：新番刚开播收藏少、热度排名天然靠后（rank 高），
+        会淹没冷门发现区（2026-08-11）。开区间：止 = 下一季起点。
+        """
+        today = date.today()
+        q = ((today.month - 1) // 3) * 3 + 1  # 本季度首月：1/4/7/10
+        start = date(today.year, q, 1)
+        if q + 3 > 12:
+            end = date(today.year + 1, 1, 1)
+        else:
+            end = date(today.year, q + 3, 1)
+        return start.isoformat(), end.isoformat()
+
     def recommend(
         self,
         profile: list[CollectionEntry],
@@ -416,7 +433,15 @@ class Recommender:
         #   normal = 非冷门池（rank ≤ 阈值）CF 高分 top-k
         #   cold   = 冷门池（rank > 阈值）CF 高分 top-k
         normal_pool = [i for i in cand if self._pop_rank[i] <= self._cold_rank_threshold]
-        cold_pool = [i for i in cand if self._pop_rank[i] > self._cold_rank_threshold]
+        # 当季新番剔除冷门区：首播日在当前新番季（1/4/7/10 月对齐）内的不进冷门池——
+        # 新番刚开播收藏少、热度排名天然靠后（rank 高），会淹没真正的冷门宝藏。
+        # 无日期信息的条目无法判定，留在冷门池（2026-08-11）。
+        s_start, s_end = self._current_season_window()
+        cold_pool = [
+            i for i in cand
+            if self._pop_rank[i] > self._cold_rank_threshold
+            and not (s_start <= (self.subject_meta[self._items[i]]["date"] or "0000-00-00") < s_end)
+        ]
         top_normal = sorted(normal_pool, key=lambda i: -scores[i])[:k]
         top_cold = sorted(cold_pool, key=lambda i: -scores[i])[:k]
 
