@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -27,20 +26,17 @@ class Recommendation:
     subject_id: int
     name: str
     score: float
-    cold: bool = False  # 该条目是否来自冷门池（热度排名 > cold_rank_threshold）
     popularity_rank: int = 0  # 全局热度排名（1 = 最热门）
 
 
 @dataclass(frozen=True)
 class RecommendResult:
-    """两区推荐结果（2026-08-08 产品改版，不再混合配额）。
+    """单区推荐结果（2026-08-11 删冷门发现后）。
 
-    normal: 动画推荐区——非冷门池（rank ≤ cold_rank_threshold）的 CF 高分 top-k；
-    cold:   冷门发现区——冷门池（rank > cold_rank_threshold）的 CF 高分 top-k。
-    两区各自独立取 top-k，互不混合。
+    normal: 推荐列表——rank ≤ rank_cap 的日本动画里，渗透归一化 CF 高分 top-k。
+    冷门发现区（rank > 阈值 + 当季新番剔除）已随功能一并删除。
     """
     normal: list[Recommendation]
-    cold: list[Recommendation]
 
 
 def score_items(
@@ -227,18 +223,25 @@ class Recommender:
         blend_lambda: float = 0.0,
         min_profile: int = 5,
         knn: int = 200,
-        cold_quota: int = 8,
-        cold_rank_threshold: int = 3000,
+        rank_cap: int = 3000,       # 推荐池热度上限：只推 rank ≤ 该值的日本动画（2026-08-11 删冷门后）
         matrix_min_rate: int = 0,   # 训练矩阵只收 rate>该值的对（0 = 全部 rate>0，ADR 0005）
         taste_min_rate: int = 4,    # 口味信号排除 rate≤该值（"四分以下不算"）
+        adaptive_gamma: bool = True,   # 自适应去热（渗透率归一化，见 recommend）
+        hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
+        hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准）
+        gamma_max: float = 0.8,         # 自适应 γ 上限
     ):
         self._blend_lambda = blend_lambda
         self._min_profile = min_profile
         self._knn = knn
-        self._cold_quota = cold_quota
-        self._cold_rank_threshold = cold_rank_threshold
+        self._rank_cap = rank_cap
         self._matrix_min_rate = matrix_min_rate
         self._taste_min_rate = taste_min_rate
+        self._adaptive_gamma = adaptive_gamma
+        self._hot_rank_threshold = hot_rank_threshold
+        self._hot_share_target = hot_share_target
+        self._gamma_max = gamma_max
+        self._last_gamma: float = 0.0  # 最近一次 recommend 用的 γ（观测/调参用）
         self._load(db_path)
 
     # ---- 加载 ---------------------------------------------------
@@ -246,10 +249,10 @@ class Recommender:
     def _load(self, db_path: str | Path) -> None:
         conn = sqlite3.connect(str(db_path))
 
-        # 条目元数据（名称 + 公共标签 + 流行度 + nsfw + 首播日）
+        # 条目元数据（名称 + 公共标签 + 流行度 + nsfw + 首播日 + 平台）
         self.subject_meta: dict[int, dict] = {}
-        for sid, name, name_cn, meta_tags, fav_done, nsfw, date in conn.execute(
-            "SELECT id, name, name_cn, meta_tags, fav_done, nsfw, date FROM subjects"
+        for sid, name, name_cn, meta_tags, fav_done, nsfw, date, platform, score in conn.execute(
+            "SELECT id, name, name_cn, meta_tags, fav_done, nsfw, date, platform, score FROM subjects"
         ):
             self.subject_meta[sid] = {
                 "name": name_cn or name,
@@ -259,6 +262,8 @@ class Recommender:
                 "fav_done": int(fav_done or 0),
                 "nsfw": bool(nsfw),
                 "date": date,
+                "platform": int(platform or 0),
+                "score": float(score or 0),  # BGM 平均分（前端卡片展示用）
             }
 
         # 语料交互：rate>0 收藏（阶段 1.5 验证的强信号），1-10 评分加权（2026-08-08 ADR 0005）。
@@ -308,6 +313,34 @@ class Recommender:
             dated = [(self.subject_meta[s]["date"], s) for s in members
                      if self.subject_meta[s]["date"]]
             first_by_root[root] = min(dated)[1] if dated else min(members)
+
+        # 只保留日本动画（2026-08-11 产品要求）：meta_tags 含任一非日产地标签 → 排除
+        # （国漫/欧美/韩等）。日本+非日双标签（如一人之下，实为国漫）一并排除。
+        # platform 2006 = 动态漫画（非真动画），一并排除。
+        _non_jp_kw = ("中国", "国漫", "国产", "大陆", "欧美", "美国", "法国", "英国",
+                      "德国", "韩国", "台湾", "香港", "俄罗斯", "加拿大", "意大利",
+                      "西班牙", "泰国", "印度")
+        self._is_jp = np.array([
+            self.subject_meta[sid]["platform"] != 2006
+            and not any(any(k in t for k in _non_jp_kw)
+                        for t in self.subject_meta[sid]["meta_tags"])
+            for sid in self._items
+        ], dtype=bool)
+
+        # 剧场版（platform 3）若是某部非剧场版动画的番外/剧场版（存在 type-11 入边，
+        # 源非剧场版）→ 排除。type 11 是"XX 的番外/剧场版"关系（间谍过家家→剧场版
+        # 间谍过家家、素晴→OAD、命运石之门→WEB 短篇都是 11）；千与千寻/你的名字等
+        # 独立剧场版无 type-11 入边，保留。2026-08-11 产品要求。
+        _movie_series = {
+            tgt for src, tgt in conn.execute(
+                "SELECT r.subject_id, r.related_subject_id FROM subject_relations r"
+                " JOIN subjects s ON s.id = r.subject_id"
+                " WHERE r.relation_type = 11 AND s.platform != 3"
+            )
+        }
+        self._is_movie_series = np.array(
+            [sid in _movie_series for sid in self._items], dtype=bool
+        )
         conn.close()
 
         # 评分加权 IDF 交互矩阵 + 行归一化（A[u,i]=idf[i]*rate；rate 为 1-10 分值）。
@@ -317,10 +350,13 @@ class Recommender:
             values=np.asarray(rate_list, dtype=np.float64),
         )
 
+        # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：A 列非零行数
+        self._df = np.asarray((self._A != 0).sum(axis=0)).ravel()
+
         self._pop = np.array([self.subject_meta[sid]["fav_done"] for sid in self._items], dtype=float)
         self._log_pop = np.log1p(self._pop)
 
-        # 全局流行度排名（1 = 最热门）：冷门池判定（rank > cold_rank_threshold）
+        # 全局流行度排名（1 = 最热门）：推荐池上限判定（rank ≤ rank_cap）与自适应 γ 的热度判定
         order = np.argsort(-self._pop)
         rank = np.empty(n_items, dtype=np.int64)
         rank[order] = np.arange(1, n_items + 1)
@@ -347,21 +383,46 @@ class Recommender:
 
     # ---- 对外接口 ------------------------------------------------
 
-    @staticmethod
-    def _current_season_window() -> tuple[str, str]:
-        """当前新番季 [起, 止) 的 ISO 日期（新番季对齐 1/4/7/10 月）。
+    def _calibrate_gamma(
+        self,
+        scores: np.ndarray,
+        pool: list[int],
+        k: int,
+    ) -> float:
+        """自适应去热强度：找 γ ∈ [0, gamma_max] 使推荐池前 pool_size 条的
+        高热度占比（rank < hot_rank_threshold）收敛到 hot_share_target。
 
-        用于从冷门池剔除当季新番：新番刚开播收藏少、热度排名天然靠后（rank 高），
-        会淹没冷门发现区（2026-08-11）。开区间：止 = 下一季起点。
+        渗透率归一化 score = base / (df+1)^γ（df = 语料收藏人数）：γ 越大热门压得
+        越狠。厚画像口味宽、中坚动画自身分就高，小 γ 即可达标；主流向薄画像要更大 γ。
+        hot_share(γ) 随 γ 单调下降（同一条的分母单调变大，热门受压制最重），二分搜索。
+
+        pool_size 取 min(k, 40)：前端活跃池就是前 40 条非隐藏；列表后段按同一归一化
+        分排序，热门/中坚按渗透率交错排列，换一批不会重新塌回全热门。
         """
-        today = date.today()
-        q = ((today.month - 1) // 3) * 3 + 1  # 本季度首月：1/4/7/10
-        start = date(today.year, q, 1)
-        if q + 3 > 12:
-            end = date(today.year + 1, 1, 1)
-        else:
-            end = date(today.year, q + 3, 1)
-        return start.isoformat(), end.isoformat()
+        if not pool:
+            return 0.0
+        pool_size = min(k, 40)
+        df = self._df
+        rank = self._pop_rank
+
+        def hot_share(gamma: float) -> float:
+            sc = scores / np.power(df + 1, gamma)
+            order = sorted(pool, key=lambda i: -sc[i])[:pool_size]
+            hot = sum(1 for i in order if rank[i] < self._hot_rank_threshold)
+            return hot / pool_size
+
+        if hot_share(0.0) <= self._hot_share_target:
+            return 0.0  # 不压已达标（厚画像/小众口味）
+        if hot_share(self._gamma_max) >= self._hot_share_target:
+            return self._gamma_max  # 压到底仍超标，取上限（薄画像/主流口味）
+        lo, hi = 0.0, self._gamma_max
+        for _ in range(12):
+            mid = (lo + hi) / 2
+            if hot_share(mid) > self._hot_share_target:
+                lo = mid
+            else:
+                hi = mid
+        return (lo + hi) / 2
 
     def recommend(
         self,
@@ -369,13 +430,13 @@ class Recommender:
         already_collected: set[int],
         k: int = 20,
     ) -> RecommendResult:
-        """给目标用户返回两区推荐（各 top-K，见 RecommendResult）。
+        """给目标用户返回推荐 top-K（2026-08-11 删冷门发现后为单区）。
 
         profile: 目标用户"看过且评分"的收藏（口味信号）
         already_collected: 目标用户全部收藏的 subject_id（过滤候选）
 
-        两区共用同一份 CF 分与过滤（排除已看 / franchise 排除+去重 / nsfw），
-        仅按热度池子切分：normal=非冷门池、cold=冷门池，各自取 CF 分最高的 k 条。
+        过滤：排除已看 / franchise 排除+去重+续作替换 / nsfw / 非日本动画 /
+        剧场版番外；池子限 rank ≤ rank_cap；自适应 γ 渗透归一化后取 CF 高分 top-k。
         """
         # 口味信号：排除四分以下（rate ≤ taste_min_rate 不算正信号，2026-08-08），
         # 评分作为权重（q[i]=idf[i]*rate）。franchise 排除与 nsfw 判断仍用全部 profile。
@@ -408,6 +469,8 @@ class Recommender:
             if self._items[i] not in already_collected
             and int(self._fr[i]) not in collected_roots
             and (profile_nsfw or not self._nsfw[i])
+            and self._is_jp[i]              # 只保留日本动画（2026-08-11）
+            and not self._is_movie_series[i]  # 去掉 TV 的剧场版续作/番外（2026-08-11）
         ]
         # franchise 去重：每个 franchise 只保留 CF 分最高的一条，续作/剧场版不重复占位。
         # 孤立条目以自身为根，天然互不合并。
@@ -424,47 +487,46 @@ class Recommender:
             fi = int(self._first_idx[i])
             if (fi != i
                     and self._items[fi] not in already_collected
-                    and (profile_nsfw or not self._nsfw[fi])):
+                    and (profile_nsfw or not self._nsfw[fi])
+                    and self._is_jp[fi]
+                    and not self._is_movie_series[fi]):
                 cand.append(fi)
             else:
                 cand.append(i)
 
-        # 两区切分（2026-08-08 产品改版，替代 quota_rank 混合）：
-        #   normal = 非冷门池（rank ≤ 阈值）CF 高分 top-k
-        #   cold   = 冷门池（rank > 阈值）CF 高分 top-k
-        normal_pool = [i for i in cand if self._pop_rank[i] <= self._cold_rank_threshold]
-        # 当季新番剔除冷门区：首播日在当前新番季（1/4/7/10 月对齐）内的不进冷门池——
-        # 新番刚开播收藏少、热度排名天然靠后（rank 高），会淹没真正的冷门宝藏。
-        # 无日期信息的条目无法判定，留在冷门池（2026-08-11）。
-        s_start, s_end = self._current_season_window()
-        cold_pool = [
-            i for i in cand
-            if self._pop_rank[i] > self._cold_rank_threshold
-            and not (s_start <= (self.subject_meta[self._items[i]]["date"] or "0000-00-00") < s_end)
-        ]
-        top_normal = sorted(normal_pool, key=lambda i: -scores[i])[:k]
-        top_cold = sorted(cold_pool, key=lambda i: -scores[i])[:k]
+        # 推荐池切分（2026-08-11 删冷门发现后）：所有合法候选里 rank ≤ rank_cap 的
+        # 日本动画。冷门区（rank > 阈值）与当季新番剔除逻辑已随冷门发现功能删除。
+        pool = [i for i in cand if self._pop_rank[i] <= self._rank_cap]
+        # 自适应去热（2026-08-11 产品改版）：渗透率归一化 score = base/(df+1)^γ，
+        # γ 按用户校准到推荐池前 min(k,40) 的神作占比 ≈ hot_share_target（见 _calibrate_gamma）。
+        # 冷启动（口味信号不足走 log_pop 兜底）不归一化，保持流行度基线。
+        if self._adaptive_gamma and (q != 0).sum() >= self._min_profile:
+            self._last_gamma = self._calibrate_gamma(scores, pool, k)
+            scores = scores / np.power(self._df + 1, self._last_gamma)
+        else:
+            self._last_gamma = 0.0
+        top = sorted(pool, key=lambda i: -scores[i])[:k]
 
-        def _rec(i: int, cold: bool) -> Recommendation:
+        def _rec(i: int) -> Recommendation:
             return Recommendation(
                 subject_id=self._items[i],
                 name=self.subject_meta[self._items[i]]["name"],
                 score=float(scores[i]),
-                cold=cold,
                 popularity_rank=int(self._pop_rank[i]),
             )
 
-        return RecommendResult(
-            normal=[_rec(i, False) for i in top_normal],
-            cold=[_rec(i, True) for i in top_cold],
-        )
+        return RecommendResult(normal=[_rec(i) for i in top])
 
     def stats(self) -> dict:
         return {
             "users": int(self._A.shape[0]),
             "items": len(self._items),
-            "cold_quota": self._cold_quota,
-            "cold_rank_threshold": self._cold_rank_threshold,
+            "rank_cap": self._rank_cap,
+            "adaptive_gamma": self._adaptive_gamma,
+            "hot_rank_threshold": self._hot_rank_threshold,
+            "hot_share_target": self._hot_share_target,
+            "gamma_max": self._gamma_max,
+            "last_gamma": self._last_gamma,
             "franchise_groups": len({int(r) for r in self._fr}),
             "franchise_multi": int((self._fr != np.array(self._items)).sum()),
         }

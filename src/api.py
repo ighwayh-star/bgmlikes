@@ -86,14 +86,13 @@ class ItemOut(BaseModel):
     subject_id: int
     name: str
     score: float
-    cold: bool = False
+    rating: float = 0        # BGM 平均分（卡片展示）
     popularity_rank: int = 0
 
 
 class RecommendResponse(BaseModel):
     username: str
-    normal: list[ItemOut] = []  # 动画推荐区（非冷门池 top-k）
-    cold: list[ItemOut] = []    # 冷门发现区（冷门池 top-k）
+    normal: list[ItemOut] = []  # 推荐列表（rank ≤ 阈值 + 自适应 γ 去热的 top-k）
     source: str = "api"  # "api" 实时拉取 / "cache" 本地语料降级（Bangumi 宕机时）
 
 
@@ -281,14 +280,13 @@ def create_app() -> FastAPI:
                 subject_id=r.subject_id,
                 name=r.name,
                 score=r.score,
-                cold=r.cold,
+                rating=recommender.subject_meta.get(r.subject_id, {}).get("score", 0.0),
                 popularity_rank=r.popularity_rank,
             )
 
         return RecommendResponse(
             username=username,
             normal=[_out(r) for r in recs.normal],
-            cold=[_out(r) for r in recs.cold],
             source=data_source,
         )
 

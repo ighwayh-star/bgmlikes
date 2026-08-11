@@ -80,6 +80,7 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.sec { background: rgba(255,255,255,.75); border: 1px solid rgba(242,109,157,.28); color: var(--accent); box-shadow: none; }
   .meta { color: var(--sub); font-size: 14px; margin-top: 18px; min-height: 20px; }
+  .meta-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .card {
     display: flex; align-items: center; gap: 14px;
     background: var(--card);
@@ -105,10 +106,13 @@
     box-shadow: 0 2px 6px rgba(242,109,157,.35);
     margin-right: 8px; vertical-align: middle; flex-shrink: 0;
   }
-  .card .name { flex: 1; min-width: 0; font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
-  .card .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
-  .card .badge.cold { background: rgba(242,109,157,.12); color: var(--accent); border: 1px solid rgba(242,109,157,.3); }
-  .card .badge.hot { background: rgba(179,154,168,.12); color: var(--sub); border: 1px solid rgba(179,154,168,.25); }
+  .card .info { flex: 1; min-width: 0; }
+  .card .name { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+  .card .tags { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+  .card .rate { font-size: 12px; font-weight: 700; color: #e8a33d; letter-spacing: .3px; }
+  .card .rate::before { content: "⭐"; font-size: 11px; margin-right: 2px; }
+  .card .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .card .badge.hot { background: rgba(242,109,157,.14); color: var(--accent); border: 1px solid rgba(242,109,157,.32); }
   .card .hide {
     flex-shrink: 0; width: 30px; height: 30px; padding: 0;
     border-radius: 50%; border: 1px solid rgba(242,109,157,.22);
@@ -137,15 +141,7 @@
   .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
   .autharea button { padding: 8px 14px; font-size: 13px; }
   #userlabel { color: var(--sub); font-size: 13px; }
-  .tabs { display: flex; gap: 10px; margin-top: 20px; }
-  .tab {
-    flex: 1; padding: 11px 0; border-radius: 999px;
-    border: 1px solid rgba(242,109,157,.2); background: #fff7fa;
-    color: var(--accent); font-size: 14px; font-weight: 600;
-    cursor: pointer; text-align: center; box-shadow: none;
-  }
-  .tab.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent)); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(242,109,157,.3); }
-  .shuffle-btn { flex: 0 0 auto; padding: 9px 16px; font-size: 13px; }
+  .shuffle-btn { padding: 8px 16px; font-size: 13px; }
   .restore {
     margin-top: 16px; border: 1px solid rgba(255,255,255,.65); border-radius: 20px;
     background: var(--card); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -194,13 +190,10 @@
     <button id="export" class="sec" disabled>导出 JPG</button>
   </div>
 
-  <div id="tabs" class="tabs hidden">
-    <button class="tab active" data-tab="normal">动画推荐</button>
-    <button class="tab" data-tab="cold">冷门发现</button>
-    <button id="shuffle" class="sec shuffle-btn" title="从推荐池重新随机选 20 部">🎲 换一批</button>
+  <div class="meta-row">
+    <div id="meta" class="meta"></div>
+    <button id="shuffle" class="sec shuffle-btn hidden" title="从推荐池重新随机选 20 部">🎲 换一批</button>
   </div>
-
-  <div id="meta" class="meta"></div>
   <div id="err" class="err hidden"></div>
   <div id="list"></div>
   <div id="restore" class="restore hidden"></div>
@@ -213,18 +206,16 @@ const exportBtn = document.getElementById('export');
 const loginBtn = document.getElementById('loginbtn');
 const logoutBtn = document.getElementById('logoutbtn');
 const userLabel = document.getElementById('userlabel');
-const tabs = document.getElementById('tabs');
 const meta = document.getElementById('meta');
 const err = document.getElementById('err');
 const list = document.getElementById('list');
 const restore = document.getElementById('restore');
 let lastData = null;
-let activeTab = 'normal';  // 'normal' 动画推荐 / 'cold' 冷门发现
-let shown = { normal: [], cold: [] };  // 各 tab 当前展示的 20 条（加权随机选出，非固定前 20）
-let shownBefore = new Set();           // 上次展示过的 sid（sessionStorage 持久化，保证每次刷新选出不同的 20 部）
-let hidden = new Map();    // sid -> name（登录后从服务端加载的"不感兴趣"）
-let loggedIn = false;      // 是否已登录（隐藏功能的前提）
-let me = null;             // 登录用户的 Bangumi 用户名
+let shown = [];              // 当前展示的 20 条（加权随机选出，非固定前 20）
+let shownBefore = new Set(); // 上次展示过的 sid（sessionStorage 持久化，保证每次刷新选出不同的 20 部）
+let hidden = new Map();      // sid -> name（登录后从服务端加载的"不感兴趣"）
+let loggedIn = false;        // 是否已登录（隐藏功能的前提）
+let me = null;               // 登录用户的 Bangumi 用户名
 
 // ---- 登录态 ----
 async function refreshAuth() {
@@ -263,7 +254,7 @@ async function loadHiddenServer() {
     // 名字暂未知（需 subject 名），用空，恢复区可显示 subject_id；到渲染时再从 lastData 补名
     (d.hidden || []).forEach(sid => hidden.set(sid, ''));
     // 从当前推荐列表补齐名字（便于恢复区显示）
-    (lastData ? (lastData.normal || []).concat(lastData.cold || []) : []).forEach(rr => {
+    (lastData ? (lastData.normal || []) : []).forEach(rr => {
       if (hidden.has(rr.subject_id)) hidden.set(rr.subject_id, rr.name);
     });
   } catch (e) {}
@@ -276,7 +267,7 @@ async function recommend() {
   list.innerHTML = '';
   restore.classList.add('hidden');
   restore.innerHTML = '';
-  tabs.classList.add('hidden');
+  shuffleBtn.classList.add('hidden');
   meta.textContent = '正在拉取用户数据…';
   go.disabled = true;
   exportBtn.disabled = true;
@@ -293,15 +284,12 @@ async function recommend() {
     }
     const d = await res.json();
     lastData = d;
-    activeTab = 'normal';
     // 已登录：重新从服务端拉"不感兴趣"（比上次推荐时的可能新增），并补当前列表名
     if (loggedIn) await loadHiddenServer();
     // 加权随机选出本页展示的 20 部：每次进入页面不同，排名越靠前出现概率越大
-    resampleTab('normal');
-    resampleTab('cold');
+    resample();
     persistShown();
-    tabs.classList.remove('hidden');
-    [...tabs.children].forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab));
+    shuffleBtn.classList.remove('hidden');
     exportBtn.disabled = false;
     updateMeta();
     renderList();
@@ -314,17 +302,16 @@ async function recommend() {
   }
 }
 
-// 当前 tab 的全部候选（k=300，来自 API；前端保持"哑"，仅作查找/后备池来源）
+// 全部候选（k=300，来自 API；前端保持"哑"，仅作查找/后备池来源）
 function allRecs() {
-  if (!lastData) return [];
-  return activeTab === 'cold' ? (lastData.cold || []) : (lastData.normal || []);
+  return lastData ? (lastData.normal || []) : [];
 }
 
-// 活跃池：当前 tab 候选里最靠前的 40 条非隐藏。隐藏一条后由更靠后的候补顶上来，
+// 活跃池：候选里最靠前的 40 条非隐藏。隐藏一条后由更靠后的候补顶上来，
 // 池子恒为 40（k=300 提供充足后备余量）。非本人查看时不按"不感兴趣"过滤。
-function poolRecs(tab) {
+function poolRecs() {
   if (!lastData) return [];
-  const ranked = lastData[tab] || [];
+  const ranked = lastData.normal || [];
   const base = viewingSelf() ? ranked.filter(r => !hidden.has(r.subject_id)) : ranked;
   return base.slice(0, 40);
 }
@@ -335,10 +322,9 @@ function viewingSelf() {
     && String(lastData.username).toLowerCase() === String(me).toLowerCase();
 }
 
-// 可见列表：当前 tab 已加权随机选出的 20 条（每次进入页面不同）
+// 可见列表：已加权随机选出的 20 条（每次进入页面不同）
 function visibleRecs() {
-  if (!lastData) return [];
-  return shown[activeTab] ?? [];
+  return shown ?? [];
 }
 
 /* ---- 加权随机 20 选 ----
@@ -376,28 +362,36 @@ function weightedPick(pool, n) {
   return out;
 }
 
-function resampleTab(tab) {
-  shown[tab] = weightedPick(poolRecs(tab), 20);
+function resample() {
+  shown = weightedPick(poolRecs(), 20);
 }
 
 function persistShown() {
   try {
-    sessionStorage.setItem('bgmlikes_shown', JSON.stringify([...new Set([...shown.normal, ...shown.cold])]));
+    sessionStorage.setItem('bgmlikes_shown', JSON.stringify([...new Set(shown.map(r => r.subject_id))]));
   } catch (e) {}
 }
 
 // 隐藏/恢复后：池子重算为前 40 条非隐藏（候补顶替），展示不足 20 时从池内加权补足
 function syncHiddenList() {
   if (!lastData) return;
-  const pool = poolRecs(activeTab);
-  const kept = shown[activeTab].filter(r => !hidden.has(r.subject_id));
+  const pool = poolRecs();
+  const kept = shown.filter(r => !hidden.has(r.subject_id));
   const need = Math.max(0, 20 - kept.length);
   if (need > 0) {
     const rest = pool.filter(r => !kept.some(k => k.subject_id === r.subject_id));
-    shown[activeTab] = kept.concat(weightedPick(rest, need));
+    shown = kept.concat(weightedPick(rest, need));
   } else {
-    shown[activeTab] = kept;
+    shown = kept;
   }
+}
+
+// 卡片标签行：BGM 评分 + 热门角标（热度排名 < 500 = 大热，去热后仍属神作区）
+function tagHtml(r) {
+  const parts = [];
+  if (r.rating > 0) parts.push(`<span class="rate">${r.rating.toFixed(1)}</span>`);
+  if (r.popularity_rank < 500) parts.push('<span class="badge hot">热门</span>');
+  return parts.join('');
 }
 
 function renderList() {
@@ -405,7 +399,11 @@ function renderList() {
   list.innerHTML = visibleRecs().map((r, i) => `
     <div class="card">
       <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
-      <span class="rank">${i + 1}</span><span class="name">${escapeHtml(r.name ?? '')}</span>
+      <span class="rank">${i + 1}</span>
+      <div class="info">
+        <span class="name">${escapeHtml(r.name ?? '')}</span>
+        <div class="tags">${tagHtml(r)}</div>
+      </div>
       <div class="links">
         <a class="link link-bgm" href="https://bgm.tv/subject/${r.subject_id}" target="_blank" rel="noopener" title="在 Bangumi 打开条目"><img class="link-ico" src="https://bgm.tv/img/favicon.ico" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('no-ico')"><span class="link-txt">BGM</span></a>
         <a class="link link-bili" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(r.name ?? '')}" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画"><img class="link-ico" src="https://www.bilibili.com/favicon.ico" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('no-ico')"><span class="link-txt">B站</span></a>
@@ -418,7 +416,7 @@ function renderList() {
 function updateMeta() {
   if (!lastData) { meta.textContent = ''; return; }
   const d = lastData;
-  let t = `${d.username} 的推荐（${activeTab === 'cold' ? '冷门发现' : '动画推荐'} ${visibleRecs().length} 条`;
+  let t = `${d.username} 的动画推荐（${visibleRecs().length} 条`;
   if (viewingSelf() && hidden.size) t += ` · 已隐藏 ${hidden.size} 条`;
   t += '）';
   if (d.source === 'cache') t += ' · ⚠ 本地缓存（Bangumi 暂不可达）';
@@ -445,19 +443,11 @@ function escapeHtml(s) {
 
 go.addEventListener('click', recommend);
 q.addEventListener('keydown', e => { if (e.key === 'Enter') recommend(); });
-tabs.addEventListener('click', e => {
-  const b = e.target.closest('.tab');
-  if (!b) return;
-  activeTab = b.dataset.tab;
-  [...tabs.children].forEach(t => t.classList.toggle('active', t === b));
-  renderList();
-  updateMeta();
-});
-// 换一批：从当前推荐池重新加权随机选 20 部替换列表（上次展示过的条目权重 ×0.1 → 基本不重复）
+// 换一批：从推荐池重新加权随机选 20 部替换列表（上次展示过的条目权重 ×0.1 → 基本不重复）
 const shuffleBtn = document.getElementById('shuffle');
 shuffleBtn.addEventListener('click', () => {
   if (!lastData) return;
-  resampleTab(activeTab);
+  resample();
   persistShown();
   renderList();
   updateMeta();
@@ -585,7 +575,6 @@ function ellipsis(ctx, text, maxWidth) {
 async function exportJpg() {
   const data = lastData;
   if (!data) return;
-  const isCold = activeTab === 'cold';  // 导出当前 tab 所在区域
   const recs = visibleRecs();  // 导出当前看到的（已过滤"不感兴趣"）列表
   if (!recs || !recs.length) return;
   exportBtn.disabled = true;
@@ -606,10 +595,10 @@ async function exportJpg() {
     ctx.fillStyle = COLORS.bg;  // JPG 无透明，先铺满
     ctx.fillRect(0, 0, W, H);
 
-    // 顶部标题：{用户名} 的动画推荐 / 冷门发现（按当前 tab）
+    // 顶部标题：{用户名} 的动画推荐
     ctx.fillStyle = COLORS.text;
     ctx.font = 'bold 28px ' + FONT;
-    ctx.fillText((data.username || '') + (isCold ? ' 的冷门发现' : ' 的动画推荐'), PAD, 60);
+    ctx.fillText((data.username || '') + ' 的动画推荐', PAD, 60);
 
     const now = new Date();
     const dateStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
@@ -655,7 +644,7 @@ async function exportJpg() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'bgmlikes-' + safeName + (isCold ? '-cold' : '') + '-' + dateStr + '.jpg';
+        a.download = 'bgmlikes-' + safeName + '-' + dateStr + '.jpg';
         document.body.appendChild(a);
         a.click();
         a.remove();
