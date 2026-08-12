@@ -109,7 +109,7 @@ def build_encoding(
     ii: np.ndarray,
     values: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """编码交互为 IDF 加权矩阵（阶段 3：反频权重生效，评分中心化被数据否决）。
+    """编码交互为 IDF 加权矩阵（阶段 3：反频权重生效；评分中心化经 values 由调用方传入）。
 
     ui, ii: 训练交互的 (用户索引, 物品索引) 数组/序列；调用方负责过滤（rate>0、train-only 防泄漏）。
     values: 每个 (u,i) 对的数值乘子（如 1-10 评分）；None = 1（纯 IDF 二值）。
@@ -229,6 +229,7 @@ class Recommender:
         adaptive_gamma: bool = False,  # 2026-08-12 实验：关闭自适应，全部用户固定 γ
         gamma: float = 1.0,            # 固定去热强度（自适应关闭时对所有用户生效，λ=1 的流行度加成不再被对冲）
         df_min_rated: int = 0,         # 2026-08-12 去热分母只计评分条数≥该值的重度用户（剔除轻度用户回暖热门）；0=全语料
+        rate_center: float = 5.0,      # 2026-08-12 相似度中心化（仅相似度）：Bn 用 idf*(rate-rate_center)，打分 A 保持 idf*rate。5 分中界——1-4 负偏好、5 中性、6-10 正偏好；0=全原始分
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -242,6 +243,7 @@ class Recommender:
         self._adaptive_gamma = adaptive_gamma
         self._gamma = gamma
         self._df_min_rated = df_min_rated
+        self._rate_center = rate_center
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -357,14 +359,20 @@ class Recommender:
         )
         conn.close()
 
-        # 评分加权 IDF 交互矩阵 + 行归一化（A[u,i]=idf[i]*rate；rate 为 1-10 分值）。
-        # 与二值相比稀疏结构不变、零额外成本（ADR 0005 全量实测 Recall +6.3% / NDCG +7.2%）。
-        self._A, self._Bn, self._idf = build_encoding(
-            uid, n_items, ui_list, ii_list,
-            values=np.asarray(rate_list, dtype=np.float64),
+        # 交互矩阵 + 行归一化。2026-08-12 相似度中心化（用户要求：同一部番打低分与打高分的
+        # 用户应降低相似度）。打分矩阵 A 保持 idf[i]*rate（原始分，ADR 0005），相似度来源 Bn
+        # 用中心化 idf[i]*(rate-rate_center)：1-4 负权重、5 中性、6-10 正权重，低分/高分用户
+        # 余弦贡献相反符号 → 相似度降低。rate_center=0 时 Bn 与 A 同源，回到原全正相似度。
+        raw = np.asarray(rate_list, dtype=np.float64)
+        self._A, _, self._idf = build_encoding(
+            uid, n_items, ui_list, ii_list, values=raw,
+        )
+        _, self._Bn, _ = build_encoding(
+            uid, n_items, ui_list, ii_list, values=raw - self._rate_center,
         )
 
-        # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：A 列非零行数。
+        # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：按训练对 bincount 计看过人数
+        # （不看评分值——中心化后 rate=5 的条目权重为 0，若按 A 非零行计会漏掉实际看过的人）。
         # df_min_rated>0 时只计重度用户（分子/相似度仍用全语料，不动 idf——全量重建会被 idf 重标抵消，实测反而更糟）。
         if self._df_min_rated > 0:
             heavy_pairs = np.asarray(user_heavy)[np.asarray(ui_list)]
@@ -373,7 +381,9 @@ class Recommender:
                 minlength=n_items,
             ).astype(np.float64)
         else:
-            self._df = np.asarray((self._A != 0).sum(axis=0)).ravel()
+            self._df = np.bincount(
+                np.asarray(ii_list, dtype=np.int64), minlength=n_items,
+            ).astype(np.float64)
 
         self._pop = np.array([self.subject_meta[sid]["fav_done"] for sid in self._items], dtype=float)
         self._log_pop = np.log1p(self._pop)
@@ -461,14 +471,15 @@ class Recommender:
         非日本动画 / 番外篇（type-11 不限平台）；池子限 rank ≤ rank_cap；γ 渗透归一化后取 CF 高分 top-k。
         """
         # 口味信号：rate ≤ taste_min_rate 不算正信号（2026-08-12 实验：取消低分过滤，taste_min_rate=0；
-        # 原 2026-08-08 定稿为 4，"四分以下不算"）。评分作为权重（q[i]=idf[i]*rate）。
+        # 原 2026-08-08 定稿为 4，"四分以下不算"）。相似度中心化后作权重（q[i]=idf[i]*(rate-rate_center)），
+        # 目标用户自己打低分的番负权重——与打高分的语料用户相似度下降，一致于 Bn（相似度）的语义。
         # franchise 排除与 nsfw 判断仍用全部 profile。
         taste = [e for e in profile if e.rate > self._taste_min_rate]
         q = encode_profile(
             [e.subject_id for e in taste],
             self._iidx,
             self._idf,
-            weights=[float(e.rate) for e in taste],
+            weights=[float(e.rate) - self._rate_center for e in taste],
         )
 
         scores = score_items(
@@ -538,6 +549,7 @@ class Recommender:
             "gamma_max": self._gamma_max,
             "gamma": self._gamma,
             "df_min_rated": self._df_min_rated,
+            "rate_center": self._rate_center,
             "blend_lambda": self._blend_lambda,
             "last_gamma": self._last_gamma,
             "franchise_groups": len({int(r) for r in self._fr}),
