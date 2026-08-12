@@ -275,7 +275,7 @@ async function recommend() {
     const res = await fetch('/v1/recommend', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      // k=300：一次拉 300 部候选；前端活跃池固定取前 100 条非隐藏，隐藏后由更靠后的候补顶上来（池子不缩水）
+      // k=300：一次拉 300 部候选；前端活跃池固定取前 50 条非隐藏，隐藏后由更靠后的候补顶上来（池子不缩水）
       body: JSON.stringify({username, k: 300})
     });
     if (!res.ok) {
@@ -307,13 +307,13 @@ function allRecs() {
   return lastData ? (lastData.normal || []) : [];
 }
 
-// 活跃池：候选里最靠前的 100 条非隐藏。隐藏一条后由更靠后的候补顶上来，
-// 池子恒为 100（k=300 提供充足后备余量）。非本人查看时不按"不感兴趣"过滤。
+// 活跃池：候选里最靠前的 50 条非隐藏。隐藏一条后由更靠后的候补顶上来，
+// 池子恒为 50（k=300 提供充足后备余量）。非本人查看时不按"不感兴趣"过滤。
 function poolRecs() {
   if (!lastData) return [];
   const ranked = lastData.normal || [];
   const base = viewingSelf() ? ranked.filter(r => !hidden.has(r.subject_id)) : ranked;
-  return base.slice(0, 100);
+  return base.slice(0, 50);
 }
 
 // 当前查看的是不是登录用户自己（"不感兴趣"只对自己可见/可用，不能改别人的喜好）
@@ -328,7 +328,7 @@ function visibleRecs() {
 }
 
 /* ---- 加权随机 10 选 ----
-   从 100 条候选里无放回加权抽 10：排名越靠前权重越大（出现概率越高）；
+   从 50 条候选里无放回加权抽 10：排名越靠前权重越大（出现概率越高）；
    上次展示过的条目权重 ×0.1，保证每次批次选出的 10 部尽量不同。 */
 function loadShownBefore() {
   try {
@@ -372,7 +372,7 @@ function persistShown() {
   } catch (e) {}
 }
 
-// 隐藏/恢复后：池子重算为前 100 条非隐藏（候补顶替），展示不足 10 时从池内加权补足
+// 隐藏/恢复后：池子重算为前 50 条非隐藏（候补顶替），展示不足 10 时从池内加权补足
 function syncHiddenList() {
   if (!lastData) return;
   const pool = poolRecs();
