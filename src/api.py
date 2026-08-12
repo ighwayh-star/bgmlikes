@@ -1,7 +1,7 @@
 """FastAPI 薄层 adapter：只做转发与编排，不写业务逻辑。
 
 删除测试：删掉本模块，复杂度应全部消失（数据层/算法层仍在）。
-接口：POST /v1/recommend {username, k} -> {normal, cold}
+接口：POST /v1/recommend {username, k} -> {normal}
 OAuth 登录：/auth/login · /auth/callback · /auth/me · /auth/logout
 偏好（登录后有"不感兴趣"隐藏）：/preferences/hidden
 """
