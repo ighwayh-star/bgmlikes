@@ -228,6 +228,7 @@ class Recommender:
         taste_min_rate: int = 0,    # 2026-08-12 实验：取消低分过滤（rate>0 全部算口味信号）；rank_cap 低热度过滤保留
         adaptive_gamma: bool = False,  # 2026-08-12 实验：关闭自适应，全部用户固定 γ
         gamma: float = 1.0,            # 固定去热强度（自适应关闭时对所有用户生效，λ=1 的流行度加成不再被对冲）
+        df_min_rated: int = 0,         # 2026-08-12 去热分母只计评分条数≥该值的重度用户（剔除轻度用户回暖热门）；0=全语料
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -240,6 +241,7 @@ class Recommender:
         self._taste_min_rate = taste_min_rate
         self._adaptive_gamma = adaptive_gamma
         self._gamma = gamma
+        self._df_min_rated = df_min_rated
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -289,6 +291,14 @@ class Recommender:
         rate_list: list[float] = []
         uid = 0
         last_user: str | None = None
+        # df_min_rated>0：去热分母只计重度用户（评分条数≥阈值）。轻度用户只看热门番，
+        # 剔除后超热番分母缩得最多、冷番基本不动，热门番出现概率温和回升（2026-08-12 解耦版）。
+        user_cnt: dict[str, int] | None = None
+        user_heavy: list[bool] = []
+        if self._df_min_rated > 0:
+            user_cnt = dict(conn.execute(
+                "SELECT user_hash, COUNT(*) FROM collections_rated_rate GROUP BY user_hash"
+            ))
         for uh, sid, rate in conn.execute(
             "SELECT user_hash, subject_id, rate FROM collections_rated_rate"
             " WHERE rate > ? ORDER BY user_hash",
@@ -297,6 +307,8 @@ class Recommender:
             if uh != last_user:
                 last_user = uh
                 uid += 1
+                if user_cnt is not None:
+                    user_heavy.append(user_cnt.get(uh, 0) >= self._df_min_rated)
             ii = self._iidx.get(sid)
             if ii is not None:
                 ui_list.append(uid - 1)
@@ -352,8 +364,16 @@ class Recommender:
             values=np.asarray(rate_list, dtype=np.float64),
         )
 
-        # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：A 列非零行数
-        self._df = np.asarray((self._A != 0).sum(axis=0)).ravel()
+        # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：A 列非零行数。
+        # df_min_rated>0 时只计重度用户（分子/相似度仍用全语料，不动 idf——全量重建会被 idf 重标抵消，实测反而更糟）。
+        if self._df_min_rated > 0:
+            heavy_pairs = np.asarray(user_heavy)[np.asarray(ui_list)]
+            self._df = np.bincount(
+                np.asarray(ii_list, dtype=np.int64)[heavy_pairs],
+                minlength=n_items,
+            ).astype(np.float64)
+        else:
+            self._df = np.asarray((self._A != 0).sum(axis=0)).ravel()
 
         self._pop = np.array([self.subject_meta[sid]["fav_done"] for sid in self._items], dtype=float)
         self._log_pop = np.log1p(self._pop)
@@ -517,6 +537,7 @@ class Recommender:
             "hot_share_target": self._hot_share_target,
             "gamma_max": self._gamma_max,
             "gamma": self._gamma,
+            "df_min_rated": self._df_min_rated,
             "blend_lambda": self._blend_lambda,
             "last_gamma": self._last_gamma,
             "franchise_groups": len({int(r) for r in self._fr}),

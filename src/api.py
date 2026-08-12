@@ -28,7 +28,7 @@ from src.auth import (
     fetch_me,
 )
 from src.bangumi_api import BangumiAPI
-from src.config import load_token
+from src.config import load_optional, load_token
 from src.dataset import APISource, CacheSource
 from src.images import CoverCache
 from src.recommender import Recommendation, Recommender
@@ -100,7 +100,10 @@ def create_app() -> FastAPI:
     api = BangumiAPI(load_token())
     source = APISource(api)
     cache_source = CacheSource(DB_PATH)  # 降级链：实时 API 失败时用本地语料兜底
-    recommender = Recommender(DB_PATH)
+    # df_min_rated：去热分母只计重度用户（剔除轻度用户回暖热门），.env 可调，0=全语料
+    recommender = Recommender(
+        DB_PATH, df_min_rated=int(load_optional("DF_MIN_RATED", "300"))
+    )
     cover_cache = CoverCache(COVER_DIR, api)  # 封面图中转（大陆直连 lain.bgm.tv 超时）
     auth = AuthStore(AUTH_DB_PATH)  # 用户登录会话 + "不感兴趣"偏好（独立 auth.db）
     logger.info("recommender loaded: %s", recommender.stats())
