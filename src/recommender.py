@@ -220,15 +220,16 @@ class Recommender:
         self,
         db_path: str | Path,
         *,
-        blend_lambda: float = 0.0,
+        blend_lambda: float = 0.0,  # 流行度对数混合系数（0 = 纯 CF，不掺流行度）
         min_profile: int = 5,
         knn: int = 200,
         rank_cap: int = 3000,       # 推荐池热度上限：只推 rank ≤ 该值的日本动画（2026-08-11 删冷门后）
         matrix_min_rate: int = 0,   # 训练矩阵只收 rate>该值的对（0 = 全部 rate>0，ADR 0005）
         taste_min_rate: int = 4,    # 口味信号排除 rate≤该值（"四分以下不算"）
-        adaptive_gamma: bool = True,   # 自适应去热（渗透率归一化，见 recommend）
+        adaptive_gamma: bool = False,  # 2026-08-12 实验：关闭自适应，全部用户固定 γ
+        gamma: float = 1.0,            # 固定去热强度（自适应关闭时对所有用户生效，λ=1 的流行度加成不再被对冲）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
-        hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准）
+        hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
     ):
         self._blend_lambda = blend_lambda
@@ -238,6 +239,7 @@ class Recommender:
         self._matrix_min_rate = matrix_min_rate
         self._taste_min_rate = taste_min_rate
         self._adaptive_gamma = adaptive_gamma
+        self._gamma = gamma
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -497,14 +499,17 @@ class Recommender:
         # 推荐池切分（2026-08-11 删冷门发现后）：所有合法候选里 rank ≤ rank_cap 的
         # 日本动画。冷门区（rank > 阈值）与当季新番剔除逻辑已随冷门发现功能删除。
         pool = [i for i in cand if self._pop_rank[i] <= self._rank_cap]
-        # 自适应去热（2026-08-11 产品改版）：渗透率归一化 score = base/(df+1)^γ，
-        # γ 按用户校准到推荐池前 min(k,40) 的神作占比 ≈ hot_share_target（见 _calibrate_gamma）。
+        # 去热（2026-08-12 实验改版）：渗透率归一化 score = base/(df+1)^γ。
+        # adaptive_gamma=True 时 γ 逐用户校准到热门占比≈target；False 时全部用户固定 self._gamma。
         # 冷启动（口味信号不足走 log_pop 兜底）不归一化，保持流行度基线。
-        if self._adaptive_gamma and (q != 0).sum() >= self._min_profile:
-            self._last_gamma = self._calibrate_gamma(scores, pool, k)
+        if (q != 0).sum() >= self._min_profile:
+            if self._adaptive_gamma:
+                self._last_gamma = self._calibrate_gamma(scores, pool, k)
+            else:
+                self._last_gamma = self._gamma
             scores = scores / np.power(self._df + 1, self._last_gamma)
         else:
-            self._last_gamma = 0.0
+            self._last_gamma = self._gamma if not self._adaptive_gamma else 0.0
         top = sorted(pool, key=lambda i: -scores[i])[:k]
 
         def _rec(i: int) -> Recommendation:
@@ -526,6 +531,8 @@ class Recommender:
             "hot_rank_threshold": self._hot_rank_threshold,
             "hot_share_target": self._hot_share_target,
             "gamma_max": self._gamma_max,
+            "gamma": self._gamma,
+            "blend_lambda": self._blend_lambda,
             "last_gamma": self._last_gamma,
             "franchise_groups": len({int(r) for r in self._fr}),
             "franchise_multi": int((self._fr != np.array(self._items)).sum()),
