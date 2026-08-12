@@ -192,7 +192,7 @@
 
   <div class="meta-row">
     <div id="meta" class="meta"></div>
-    <button id="shuffle" class="sec shuffle-btn hidden" title="从推荐池重新随机选 20 部">🎲 换一批</button>
+    <button id="shuffle" class="sec shuffle-btn hidden" title="从推荐池重新随机选 10 部">🎲 换一批</button>
   </div>
   <div id="err" class="err hidden"></div>
   <div id="list"></div>
@@ -211,7 +211,7 @@ const err = document.getElementById('err');
 const list = document.getElementById('list');
 const restore = document.getElementById('restore');
 let lastData = null;
-let shown = [];              // 当前展示的 20 条（加权随机选出，非固定前 20）
+let shown = [];              // 当前展示的 10 条（加权随机选出，非固定前 10）
 let shownBefore = new Set(); // 上次展示过的 sid（sessionStorage 持久化，保证每次刷新选出不同的 20 部）
 let hidden = new Map();      // sid -> name（登录后从服务端加载的"不感兴趣"）
 let loggedIn = false;        // 是否已登录（隐藏功能的前提）
@@ -275,7 +275,7 @@ async function recommend() {
     const res = await fetch('/v1/recommend', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      // k=300：一次拉 300 部候选；前端活跃池固定取前 40 条非隐藏，隐藏后由更靠后的候补顶上来（池子不缩水）
+      // k=300：一次拉 300 部候选；前端活跃池固定取前 100 条非隐藏，隐藏后由更靠后的候补顶上来（池子不缩水）
       body: JSON.stringify({username, k: 300})
     });
     if (!res.ok) {
@@ -286,7 +286,7 @@ async function recommend() {
     lastData = d;
     // 已登录：重新从服务端拉"不感兴趣"（比上次推荐时的可能新增），并补当前列表名
     if (loggedIn) await loadHiddenServer();
-    // 加权随机选出本页展示的 20 部：每次进入页面不同，排名越靠前出现概率越大
+    // 加权随机选出本页展示的 10 部：每次进入页面不同，排名越靠前出现概率越大
     resample();
     persistShown();
     shuffleBtn.classList.remove('hidden');
@@ -307,13 +307,13 @@ function allRecs() {
   return lastData ? (lastData.normal || []) : [];
 }
 
-// 活跃池：候选里最靠前的 40 条非隐藏。隐藏一条后由更靠后的候补顶上来，
-// 池子恒为 40（k=300 提供充足后备余量）。非本人查看时不按"不感兴趣"过滤。
+// 活跃池：候选里最靠前的 100 条非隐藏。隐藏一条后由更靠后的候补顶上来，
+// 池子恒为 100（k=300 提供充足后备余量）。非本人查看时不按"不感兴趣"过滤。
 function poolRecs() {
   if (!lastData) return [];
   const ranked = lastData.normal || [];
   const base = viewingSelf() ? ranked.filter(r => !hidden.has(r.subject_id)) : ranked;
-  return base.slice(0, 40);
+  return base.slice(0, 100);
 }
 
 // 当前查看的是不是登录用户自己（"不感兴趣"只对自己可见/可用，不能改别人的喜好）
@@ -322,14 +322,14 @@ function viewingSelf() {
     && String(lastData.username).toLowerCase() === String(me).toLowerCase();
 }
 
-// 可见列表：已加权随机选出的 20 条（每次进入页面不同）
+// 可见列表：已加权随机选出的 10 条（每次进入页面不同）
 function visibleRecs() {
   return shown ?? [];
 }
 
-/* ---- 加权随机 20 选 ----
-   从 40 条候选里无放回加权抽 20：排名越靠前权重越大（出现概率越高）；
-   上次展示过的条目权重 ×0.2，保证每次进入页面选出的 20 部尽量不同。 */
+/* ---- 加权随机 10 选 ----
+   从 100 条候选里无放回加权抽 10：排名越靠前权重越大（出现概率越高）；
+   上次展示过的条目权重 ×0.1，保证每次批次选出的 10 部尽量不同。 */
 function loadShownBefore() {
   try {
     const s = sessionStorage.getItem('bgmlikes_shown');
@@ -342,7 +342,7 @@ function weightedPick(pool, n) {
   const alive = pool.map((_, i) => i);   // 原始顺序索引（pool 即分数降序）
   const weights = pool.map((r, i) => {
     let w = pool.length - i;             // 第一名权重最大，最后一名为 1
-    if (shownBefore.has(r.subject_id)) w *= 0.1;   // 上次出现过的概率大降 → 每次刷新约 15/20 不同
+    if (shownBefore.has(r.subject_id)) w *= 0.1;   // 上次出现过的概率大降 → 基本不重复
     return w;
   });
   let total = weights.reduce((a, b) => a + b, 0);
@@ -363,7 +363,7 @@ function weightedPick(pool, n) {
 }
 
 function resample() {
-  shown = weightedPick(poolRecs(), 20);
+  shown = weightedPick(poolRecs(), 10);
 }
 
 function persistShown() {
@@ -372,12 +372,12 @@ function persistShown() {
   } catch (e) {}
 }
 
-// 隐藏/恢复后：池子重算为前 40 条非隐藏（候补顶替），展示不足 20 时从池内加权补足
+// 隐藏/恢复后：池子重算为前 100 条非隐藏（候补顶替），展示不足 10 时从池内加权补足
 function syncHiddenList() {
   if (!lastData) return;
   const pool = poolRecs();
   const kept = shown.filter(r => !hidden.has(r.subject_id));
-  const need = Math.max(0, 20 - kept.length);
+  const need = Math.max(0, 10 - kept.length);
   if (need > 0) {
     const rest = pool.filter(r => !kept.some(k => k.subject_id === r.subject_id));
     shown = kept.concat(weightedPick(rest, need));
@@ -443,7 +443,7 @@ function escapeHtml(s) {
 
 go.addEventListener('click', recommend);
 q.addEventListener('keydown', e => { if (e.key === 'Enter') recommend(); });
-// 换一批：从推荐池重新加权随机选 20 部替换列表（上次展示过的条目权重 ×0.1 → 基本不重复）
+// 换一批：从推荐池重新加权随机选 10 部替换列表（上次展示过的条目权重 ×0.1 → 基本不重复）
 const shuffleBtn = document.getElementById('shuffle');
 shuffleBtn.addEventListener('click', () => {
   if (!lastData) return;
