@@ -72,11 +72,11 @@ def main() -> None:
             continue
         train_idx = {iidx[s] for s in train}
         cand0 = [i for i in range(n) if i not in train_idx]
-        # 口味信号：排除四分以下（rate>4），评分加权（与产品 recommend() 同源）
+        # 口味信号：rate>0 全算（与产品 taste_min_rate=0 同源），评分中心化权重（与产品 rate_center 同源）
         taste = [(s, r_) for s, r_ in zip(eu["train"], eu["train_rates"])
-                 if s in iidx and r_ > 4]
+                 if s in iidx and r_ > 0]
         q = encode_profile([s for s, _ in taste], iidx, r._idf,
-                           weights=[float(r_) for _, r_ in taste])
+                           weights=[float(r_) - r._rate_center for _, r_ in taste])
         scores = score_items(r._Bn, r._A, r._log_pop, q, 0.0, MIN_TRAIN, knn=r._knn)
 
         # 已看 franchise 集合 + test 中被排除的续作/同季数
