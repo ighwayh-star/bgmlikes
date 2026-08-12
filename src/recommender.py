@@ -225,7 +225,7 @@ class Recommender:
         knn: int = 200,
         rank_cap: int = 3000,       # 推荐池热度上限：只推 rank ≤ 该值的日本动画（2026-08-11 删冷门后）
         matrix_min_rate: int = 0,   # 训练矩阵只收 rate>该值的对（0 = 全部 rate>0，ADR 0005）
-        taste_min_rate: int = 4,    # 口味信号排除 rate≤该值（"四分以下不算"）
+        taste_min_rate: int = 0,    # 2026-08-12 实验：取消低分过滤（rate>0 全部算口味信号）；rank_cap 低热度过滤保留
         adaptive_gamma: bool = False,  # 2026-08-12 实验：关闭自适应，全部用户固定 γ
         gamma: float = 1.0,            # 固定去热强度（自适应关闭时对所有用户生效，λ=1 的流行度加成不再被对冲）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
@@ -329,19 +329,19 @@ class Recommender:
             for sid in self._items
         ], dtype=bool)
 
-        # 剧场版（platform 3）若是某部非剧场版动画的番外/剧场版（存在 type-11 入边，
-        # 源非剧场版）→ 排除。type 11 是"XX 的番外/剧场版"关系（间谍过家家→剧场版
-        # 间谍过家家、素晴→OAD、命运石之门→WEB 短篇都是 11）；千与千寻/你的名字等
-        # 独立剧场版无 type-11 入边，保留。2026-08-11 产品要求。
-        _movie_series = {
+        # 番外/剧场版排除（2026-08-12 产品要求升级）：任何有 type-11 入边的条目
+        # （"XX 的番外/剧场版"），不论 TV/OVA/WEB/剧场版 一律排除——番外篇不进推荐列表。
+        # 原（2026-08-11）只排除剧场版（platform==3）番外；用户要求扩展至全部平台。
+        # type 11 是"XX 的番外/剧场版"关系（间谍过家家→剧场版、素晴→OAD、
+        # 命运石之门→WEB 短篇都是 11）；千与千寻/你的名字等独立剧场版无 type-11 入边，保留。
+        _side_targets = {
             tgt for src, tgt in conn.execute(
-                "SELECT r.subject_id, r.related_subject_id FROM subject_relations r"
-                " JOIN subjects s ON s.id = r.subject_id"
-                " WHERE r.relation_type = 11 AND s.platform != 3"
+                "SELECT subject_id, related_subject_id FROM subject_relations"
+                " WHERE relation_type = 11"
             )
         }
-        self._is_movie_series = np.array(
-            [sid in _movie_series for sid in self._items], dtype=bool
+        self._is_side_content = np.array(
+            [sid in _side_targets for sid in self._items], dtype=bool
         )
         conn.close()
 
@@ -437,11 +437,12 @@ class Recommender:
         profile: 目标用户"看过且评分"的收藏（口味信号）
         already_collected: 目标用户全部收藏的 subject_id（过滤候选）
 
-        过滤：排除已看 / franchise 排除+去重+续作替换 / nsfw / 非日本动画 /
-        剧场版番外；池子限 rank ≤ rank_cap；自适应 γ 渗透归一化后取 CF 高分 top-k。
+        过滤：排除已看 / franchise 只保留第一部（续作/剧场版/番外一律排除）/ nsfw /
+        非日本动画 / 番外篇（type-11 不限平台）；池子限 rank ≤ rank_cap；γ 渗透归一化后取 CF 高分 top-k。
         """
-        # 口味信号：排除四分以下（rate ≤ taste_min_rate 不算正信号，2026-08-08），
-        # 评分作为权重（q[i]=idf[i]*rate）。franchise 排除与 nsfw 判断仍用全部 profile。
+        # 口味信号：rate ≤ taste_min_rate 不算正信号（2026-08-12 实验：取消低分过滤，taste_min_rate=0；
+        # 原 2026-08-08 定稿为 4，"四分以下不算"）。评分作为权重（q[i]=idf[i]*rate）。
+        # franchise 排除与 nsfw 判断仍用全部 profile。
         taste = [e for e in profile if e.rate > self._taste_min_rate]
         q = encode_profile(
             [e.subject_id for e in taste],
@@ -471,30 +472,14 @@ class Recommender:
             if self._items[i] not in already_collected
             and int(self._fr[i]) not in collected_roots
             and (profile_nsfw or not self._nsfw[i])
-            and self._is_jp[i]              # 只保留日本动画（2026-08-11）
-            and not self._is_movie_series[i]  # 去掉 TV 的剧场版续作/番外（2026-08-11）
+            and self._is_jp[i]               # 只保留日本动画（2026-08-11）
+            and not self._is_side_content[i]  # 番外/剧场版一律不进列表（2026-08-12 升级：不限平台）
         ]
-        # franchise 去重：每个 franchise 只保留 CF 分最高的一条，续作/剧场版不重复占位。
-        # 孤立条目以自身为根，天然互不合并。
-        best: dict[int, tuple[float, int]] = {}
-        for i in cand:
-            r = int(self._fr[i])
-            if r not in best or scores[i] > best[r][0]:
-                best[r] = (scores[i], i)
-        # 续作替换：组内 CF 分最高的那条若是续作/剧场版（非第一部），换成该系列第一部。
-        # 仅当第一部仍是合法候选（未被收藏、非黄片）时替换，否则保留原条目。
-        # 2026-08-11 产品要求：列表里出现的续作都换成第一部。
-        cand = []
-        for r, (_, i) in best.items():
-            fi = int(self._first_idx[i])
-            if (fi != i
-                    and self._items[fi] not in already_collected
-                    and (profile_nsfw or not self._nsfw[fi])
-                    and self._is_jp[fi]
-                    and not self._is_movie_series[fi]):
-                cand.append(fi)
-            else:
-                cand.append(i)
+        # franchise 去重 + 续作排除（2026-08-12 产品要求升级）：每系列只保留"第一部"
+        # （组内最早首播日），续作/剧场版/番外一律丢弃，不回落。
+        # 孤立条目以自身为根，天然互不合并；第一部若因候选约束（收藏/黄片/非日/番外）
+        # 被过滤掉，则整个系列都不出现。原 2026-08-11 是"续作换成第一部"，改为直接排除。
+        cand = [i for i in cand if int(self._first_idx[i]) == i]
 
         # 推荐池切分（2026-08-11 删冷门发现后）：所有合法候选里 rank ≤ rank_cap 的
         # 日本动画。冷门区（rank > 阈值）与当季新番剔除逻辑已随冷门发现功能删除。
