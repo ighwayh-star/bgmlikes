@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from pathlib import Path
 
 import httpx
@@ -43,6 +44,11 @@ COVER_DIR = Path(__file__).resolve().parent.parent / "data" / "covers"
 PICS_DIR = Path(__file__).resolve().parent.parent / "pics"  # 发帖用截图直链（本地不上 git）
 
 CALENDAR_URL = "https://api.bgm.tv/calendar"
+# 每日放送「只看我的」覆盖的收藏状态（"抛弃"不显示）
+COLLECTED_STATES = {"在看", "看过", "想看", "搁置"}
+# /daily/collected 内存缓存（重用户收藏数百条，拉取数秒；5 分钟 TTL 避免每次页面加载都打 Bangumi）
+_COLLECTED_CACHE: dict[int, tuple[float, list[dict]]] = {}
+_COLLECTED_TTL = 300
 
 
 def _cookie_max_age() -> int:
@@ -249,23 +255,31 @@ def create_app() -> FastAPI:
         auth.clear_daily_hidden(sess.user_id)
         return {"ok": True}
 
-    # ---- 本季在看（每日放送「只看在看」筛选的数据源）----
-    @app.get("/daily/watching")
-    def get_daily_watching(request: Request) -> dict:
-        """登录用户本季在看：以服务器 token 拉其 Bangumi "在看" 收藏（/v0 公开数据）。
+    # ---- 用户收藏（每日放送「只看我的」筛选的数据源）----
+    @app.get("/daily/collected")
+    def get_daily_collected(request: Request) -> dict:
+        """登录用户的收藏状态（在看/看过/想看/搁置，不含"抛弃"）：以服务器 token 拉 /v0 公开收藏。
 
-        每日放送页拿到这个 subject_id 集合后，与本季放送表（calendar）取交集即"本季在看"。
+        每日放送页拿到 [{id, state}] 后，与本季放送表（calendar）取交集即"我收藏的本季番"，
+        卡片上可展示各自的状态标签。
         """
         sess = _session_from_request(request, auth)
         if sess is None:
             raise HTTPException(status_code=401, detail="请先登录")
+        cached = _COLLECTED_CACHE.get(sess.user_id)
+        if cached and time.time() - cached[0] < _COLLECTED_TTL:
+            return {"items": cached[1]}
         try:
-            entries = api.fetch_collections(sess.username, state="在看",
-                                            subject_type=2, max_seconds=15)
+            entries = api.fetch_collections(sess.username, subject_type=2, max_seconds=15)
         except (httpx.HTTPError, RuntimeError) as e:
-            logger.exception("拉取在看列表失败：%s", e)
-            raise HTTPException(status_code=502, detail=f"获取在看列表失败：{e}")
-        return {"watching": sorted({e.subject_id for e in entries})}
+            logger.exception("拉取收藏列表失败：%s", e)
+            raise HTTPException(status_code=502, detail=f"获取收藏列表失败：{e}")
+        items = [
+            {"id": e.subject_id, "state": e.state}
+            for e in entries if e.state in COLLECTED_STATES
+        ]
+        _COLLECTED_CACHE[sess.user_id] = (time.time(), items)
+        return {"items": items}
 
     @app.post("/v1/recommend", response_model=RecommendResponse)
     def recommend(req: RecommendRequest) -> RecommendResponse:

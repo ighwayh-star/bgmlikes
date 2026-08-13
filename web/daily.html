@@ -68,13 +68,19 @@
     border: 1px solid rgba(242,109,157,.2); background: #fff7fa; color: var(--accent);
     font-size: 15px; font-weight: 600; cursor: pointer; }
   .tab.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent)); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(242,109,157,.3); }
-  .watching-toggle { flex: 0 0 auto; margin-left: auto; padding: 9px 14px; border-radius: 999px;
+  .collected-toggle { flex: 0 0 auto; margin-left: auto; padding: 9px 14px; border-radius: 999px;
     border: 1px solid rgba(242,109,157,.28); background: rgba(255,255,255,.75); color: var(--accent);
     font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
     transition: background .18s, transform .18s; }
-  .watching-toggle:hover { background: rgba(255,179,209,.2); }
-  .watching-toggle.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+  .collected-toggle:hover { background: rgba(255,179,209,.2); }
+  .collected-toggle.active { background: linear-gradient(135deg, var(--accent-soft), var(--accent));
     border-color: transparent; color: #fff; }
+  .state-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px;
+    border-radius: 99px; margin-right: 6px; }
+  .state--watching { color: #e85f8d; background: rgba(232,95,141,.12); }
+  .state--watched { color: #7c8fa6; background: rgba(124,143,166,.14); }
+  .state--want { color: #4d96ff; background: rgba(77,150,255,.12); }
+  .state--hold { color: #e8a87c; background: rgba(232,168,124,.16); }
 
   .meta { color: var(--sub); font-size: 14px; margin-bottom: 12px; min-height: 20px; }
   .err { color: #e85f8d; font-size: 14px; margin-bottom: 12px; }
@@ -156,7 +162,7 @@
   <div class="tabs">
     <div id="tabDaily" class="tab active">每日</div>
     <div id="tabSeason" class="tab">本季全览</div>
-    <button id="watchingToggle" class="watching-toggle hidden" title="只看本季在看的动画">👁 只看在看</button>
+    <button id="collectedToggle" class="collected-toggle hidden" title="只显示我收藏中的番（在看/看过/想看/搁置）">👁 只看我的</button>
   </div>
   <div id="loginHint" class="login-hint hidden">登录后可在每日放送中隐藏不喜欢的新番</div>
   <div id="err" class="err hidden"></div>
@@ -177,12 +183,13 @@ const content = document.getElementById('content');
 const tabDaily = document.getElementById('tabDaily');
 const tabSeason = document.getElementById('tabSeason');
 const loginHint = document.getElementById('loginHint');
-const watchingToggle = document.getElementById('watchingToggle');
+const collectedToggle = document.getElementById('collectedToggle');
 
 let calendarData = null;   // 放送表（7 天）
 let hiddenIds = [];        // 已隐藏的 subject 集合（登录后从服务端拉取）
-let watchingIds = null;    // 登录用户"在看"集合（Set<subject_id>）；null = 未知/拉取失败
-let watchingOnly = false;  // 「只看在看」筛选开关
+let collectedIds = null;   // 登录用户收藏集合（Set<subject_id>，在看/看过/想看/搁置）；null = 未知/拉取失败
+let collectedState = new Map();  // subject_id -> 状态名（卡片标签用）
+let collectedOnly = false; // 「只看我的」筛选开关
 let loggedIn = false;
 let me = null;
 let tab = 'daily';         // 'daily' | 'season'
@@ -229,10 +236,10 @@ async function refreshAuth() {
       loginBtn.classList.add('hidden');
       logoutBtn.classList.remove('hidden');
       await loadHidden();
-      await loadWatching();
+      loadCollected();  // 不阻塞日历加载：完成后自行刷新登录UI/渲染
     } else {
       me = null; hiddenIds = [];
-      watchingIds = null; watchingOnly = false;
+      collectedIds = null; collectedOnly = false; collectedState = new Map();
       userLabel.classList.add('hidden');
       logoutBtn.classList.add('hidden');
       loginBtn.classList.remove('hidden');
@@ -248,10 +255,10 @@ async function refreshAuth() {
 
 function refreshLoginUI() {
   loginHint.classList.toggle('hidden', loggedIn);
-  const usable = loggedIn && !!watchingIds;
-  if (!usable) watchingOnly = false;
-  watchingToggle.classList.toggle('hidden', !usable);
-  watchingToggle.classList.toggle('active', watchingOnly);
+  const usable = loggedIn && !!collectedIds;
+  if (!usable) collectedOnly = false;
+  collectedToggle.classList.toggle('hidden', !usable);
+  collectedToggle.classList.toggle('active', collectedOnly);
 }
 
 async function loadHidden() {
@@ -263,15 +270,19 @@ async function loadHidden() {
   } catch (e) { hiddenIds = []; }
 }
 
-// 登录用户的"在看"集合（本季判定：前端与放送表 calendar 取交集）
-async function loadWatching() {
-  watchingIds = null;
+// 登录用户的收藏状态（在看/看过/想看/搁置）；本季判定：前端与放送表 calendar 取交集
+async function loadCollected() {
+  collectedIds = null; collectedState = new Map();
   try {
-    const r = await fetch('/daily/watching');
+    const r = await fetch('/daily/collected');
     if (!r.ok) return;
     const d = await r.json();
-    watchingIds = new Set((d.watching || []).map(Number));
-  } catch (e) { watchingIds = null; }
+    const ids = new Set(); const st = new Map();
+    (d.items || []).forEach(it => { ids.add(Number(it.id)); st.set(Number(it.id), it.state); });
+    collectedIds = ids; collectedState = st;
+  } catch (e) { collectedIds = null; }
+  refreshLoginUI();
+  render();
 }
 
 // ---- 隐藏 / 取消隐藏（需登录）----
@@ -331,15 +342,22 @@ function render() {
   else renderSeason();
 }
 
-// 「只看在看」：开关开启且在看集合可用时才过滤
-function showIfWatching(id) { return !watchingOnly || (watchingIds && watchingIds.has(Number(id))); }
+// 「只看我的」：开关开启且收藏集合可用时才过滤
+function showIfCollected(id) { return !collectedOnly || (collectedIds && collectedIds.has(Number(id))); }
+
+const STATE_CLS = { '在看':'watching', '看过':'watched', '想看':'want', '搁置':'hold' };
+function stateTag(id) {
+  if (!collectedState || !collectedState.has(Number(id))) return '';
+  const st = collectedState.get(Number(id));
+  return '<span class="state-tag state--' + (STATE_CLS[st] || 'other') + '">' + escapeHtml(st) + '</span>';
+}
 
 function renderDaily() {
   const todayId = getTodayId();
   const yesterdayId = getYesterdayId();
   const todayRaw = getByWeekday(calendarData, todayId);
   const yesterdayRaw = getByWeekday(calendarData, yesterdayId);
-  const filter = a => !hiddenIds.includes(a.id) && showIfWatching(a.id);
+  const filter = a => !hiddenIds.includes(a.id) && showIfCollected(a.id);
   const todayVis = todayRaw.filter(filter);
   const yesterdayVis = yesterdayRaw.filter(filter);
   const todayHid = todayRaw.filter(a => hiddenIds.includes(a.id));
@@ -360,7 +378,7 @@ function renderDaily() {
     html += '</div>';
   }
 
-  if (!html) html = '<div class="empty">' + (watchingOnly ? '今天没有在看的番' : '今天暂无放送') + '</div>';
+  if (!html) html = '<div class="empty">' + (collectedOnly ? '今天没有我收藏的番' : '今天暂无放送') + '</div>';
   content.innerHTML = html;
   bindCardEvents(content);
 }
@@ -386,7 +404,7 @@ function makeCard(anime, isHidden) {
     '<div class="info">' +
       '<div class="name-cn">' + escapeHtml(anime.nameCn) + '</div>' +
       (anime.name !== anime.nameCn ? '<div class="name-ja">' + escapeHtml(anime.name) + '</div>' : '') +
-      '<div class="meta-row">' + (score ? '<span class="rating">⭐ ' + score + '</span>' : '') + '</div>' +
+      '<div class="meta-row">' + stateTag(anime.id) + (score ? '<span class="rating">⭐ ' + score + '</span>' : '') + '</div>' +
     '</div>' +
     '<div class="actions">' +
       '<button class="act-btn act-search" data-action="search" title="B站搜索">🔍</button>' +
@@ -440,8 +458,8 @@ function renderSeason() {
   (calendarData || []).forEach(day => {
     const wd = day.weekday;
     if (!wd || !day.items || day.items.length === 0) return;
-    const vis = day.items.filter(a => !hiddenIds.includes(a.id) && showIfWatching(a.id));
-    const hid = day.items.filter(a => hiddenIds.includes(a.id) && showIfWatching(a.id));
+    const vis = day.items.filter(a => !hiddenIds.includes(a.id) && showIfCollected(a.id));
+    const hid = day.items.filter(a => hiddenIds.includes(a.id) && showIfCollected(a.id));
     const all = [...vis, ...hid];
     if (all.length === 0) return;
     html += '<div class="day-sec"><div class="day-head">' +
@@ -526,10 +544,10 @@ tabDaily.onclick = () => { tab = 'daily'; selectMode = false; selectedIds.clear(
   tabDaily.classList.add('active'); tabSeason.classList.remove('active'); render(); };
 tabSeason.onclick = () => { tab = 'season'; selectMode = false; selectedIds.clear();
   tabSeason.classList.add('active'); tabDaily.classList.remove('active'); render(); };
-watchingToggle.addEventListener('click', () => {
-  if (!loggedIn || !watchingIds) { alert('获取在看列表失败，请刷新重试'); return; }
-  watchingOnly = !watchingOnly;
-  watchingToggle.classList.toggle('active', watchingOnly);
+collectedToggle.addEventListener('click', () => {
+  if (!loggedIn || !collectedIds) { alert('获取收藏列表失败，请刷新重试'); return; }
+  collectedOnly = !collectedOnly;
+  collectedToggle.classList.toggle('active', collectedOnly);
   render();
 });
 loginBtn.addEventListener('click', () => { window.location = '/auth/login'; });
