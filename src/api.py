@@ -249,6 +249,24 @@ def create_app() -> FastAPI:
         auth.clear_daily_hidden(sess.user_id)
         return {"ok": True}
 
+    # ---- 本季在看（每日放送「只看在看」筛选的数据源）----
+    @app.get("/daily/watching")
+    def get_daily_watching(request: Request) -> dict:
+        """登录用户本季在看：以服务器 token 拉其 Bangumi "在看" 收藏（/v0 公开数据）。
+
+        每日放送页拿到这个 subject_id 集合后，与本季放送表（calendar）取交集即"本季在看"。
+        """
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        try:
+            entries = api.fetch_collections(sess.username, state="在看",
+                                            subject_type=2, max_seconds=15)
+        except (httpx.HTTPError, RuntimeError) as e:
+            logger.exception("拉取在看列表失败：%s", e)
+            raise HTTPException(status_code=502, detail=f"获取在看列表失败：{e}")
+        return {"watching": sorted({e.subject_id for e in entries})}
+
     @app.post("/v1/recommend", response_model=RecommendResponse)
     def recommend(req: RecommendRequest) -> RecommendResponse:
         username = req.username.strip()
