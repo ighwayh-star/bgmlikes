@@ -230,6 +230,7 @@ class Recommender:
         gamma: float = 1.0,            # 固定去热强度（自适应关闭时对所有用户生效，λ=1 的流行度加成不再被对冲）
         df_min_rated: int = 0,         # 2026-08-12 去热分母只计评分条数≥该值的重度用户（剔除轻度用户回暖热门）；0=全语料
         rate_center: float = 5.0,      # 2026-08-12 相似度中心化（仅相似度）：Bn 用 idf*(rate-rate_center)，打分 A 保持 idf*rate。5 分中界——1-4 负偏好、5 中性、6-10 正偏好；0=全原始分
+        idf_in_score: bool = True,     # 2026-08-13 打分矩阵 A 是否带 idf 乘子（分子 idf 实验）：False=去掉（A 保持原分），相似度 Bn/q 的 idf 保留。实测 noA 比全去更好
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -244,6 +245,7 @@ class Recommender:
         self._gamma = gamma
         self._df_min_rated = df_min_rated
         self._rate_center = rate_center
+        self._idf_in_score = idf_in_score
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -367,6 +369,10 @@ class Recommender:
         self._A, _, self._idf = build_encoding(
             uid, n_items, ui_list, ii_list, values=raw,
         )
+        if not self._idf_in_score:
+            # 分子 idf 实验（2026-08-13）：打分矩阵 A 去掉 idf 乘子（A=idf×rate→rate），
+            # 相似度 Bn/q 的 idf 保留（它做邻居选择有用，实测 noA > all）。结果更热但 NDCG/Recall 大涨。
+            self._A = self._A.multiply(1.0 / self._idf).tocsr()
         _, self._Bn, _ = build_encoding(
             uid, n_items, ui_list, ii_list, values=raw - self._rate_center,
         )
@@ -550,6 +556,7 @@ class Recommender:
             "gamma": self._gamma,
             "df_min_rated": self._df_min_rated,
             "rate_center": self._rate_center,
+            "idf_in_score": self._idf_in_score,
             "blend_lambda": self._blend_lambda,
             "last_gamma": self._last_gamma,
             "franchise_groups": len({int(r) for r in self._fr}),

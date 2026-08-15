@@ -108,9 +108,11 @@ def create_app() -> FastAPI:
     cache_source = CacheSource(DB_PATH)  # 降级链：实时 API 失败时用本地语料兜底
     # df_min_rated：去热分母只计重度用户（剔除轻度用户回暖热门），.env 可调，0=全语料
     # rate_center：相似度中心化（rate-5，5 分中界，1-4 负偏好），打分保持原始分，.env 可调，0=全原始分
+    # idf_in_score：打分矩阵 A 是否带 idf 乘子（0=去掉，相似度 Bn/q 的 idf 保留），.env 可调
     recommender = Recommender(
         DB_PATH, df_min_rated=int(load_optional("DF_MIN_RATED", "300")),
         rate_center=float(load_optional("RATE_CENTER", "5")),
+        idf_in_score=load_optional("IDF_IN_SCORE", "1") == "1",
     )
     cover_cache = CoverCache(COVER_DIR, api)  # 封面图中转（大陆直连 lain.bgm.tv 超时）
     auth = AuthStore(AUTH_DB_PATH)  # 用户登录会话 + "不感兴趣"偏好（独立 auth.db）
