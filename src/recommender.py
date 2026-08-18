@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -213,6 +215,66 @@ def build_franchise(
     return root_map
 
 
+# ---- 老动画标签 boost（2026-08-18 路由 A 打分层）----
+TAG_DF_MIN = 15      # 标签词表下界：滤掉超稀有/噪音标签
+TAG_DF_MAX = 5000    # 标签词表上界：滤掉超普遍标签（TV/日本/剧场版…）
+# 停用词：地区/格式/来源/分级 类标签（非题材，对相似度是噪音）
+STOP_TAGS = {
+    "中国", "欧美", "美国", "法国", "韩国", "英国", "捷克", "苏联", "台湾",
+    "香港", "俄罗斯", "WEB", "OVA", "短片", "MV", "PV", "CM", "动态漫画",
+    "漫画改", "原创", "小说改", "游戏改", "影视改", "R18",
+}
+
+
+def build_tags(
+    items: list[int],
+    subject_meta: dict[int, dict],
+    old_year: int,
+) -> tuple[sp.csr_matrix, sp.csr_matrix, np.ndarray]:
+    """老番标签 boost 的基建：P(item×tag, idf 加权)、Pn(行归一化)、old_mask(date<old_year)。
+
+    目标用户口味投影到题材空间 q_tag = P.T·q，Pn[i]·q_tag 即 tag_cos——晚入坑用户
+    对老年代没评分信号，但靠题材亲和仍能浮现老动画（非保底硬塞，见 docs/adr/0008）。
+    β 通过 Recommender(old_tag_beta=) 注入，.env OLD_TAG_BETA 可调，0=关。
+    """
+    tag_doc: Counter[str] = Counter()
+    item_tags: dict[int, set[str]] = {}
+    for i, sid in enumerate(items):
+        tags = set(subject_meta[sid].get("meta_tags") or [])
+        item_tags[i] = tags
+        for t in tags:
+            tag_doc[t] += 1
+    vocab = [t for t in tag_doc if TAG_DF_MIN <= tag_doc[t] <= TAG_DF_MAX and t not in STOP_TAGS]
+    vocab.sort()
+    tidx = {t: j for j, t in enumerate(vocab)}
+    n_items, n_tags = len(items), len(vocab)
+    tag_idf = {t: math.log((n_items + 1) / (tag_doc[t] + 1)) + 1 for t in vocab}
+
+    rows, cols, vals = [], [], []
+    for i, tags in item_tags.items():
+        for t in tags:
+            j = tidx.get(t)
+            if j is not None:
+                rows.append(i)
+                cols.append(j)
+                vals.append(tag_idf[t])
+    P = sp.csr_matrix((vals, (rows, cols)), shape=(n_items, n_tags))
+
+    # Pn：item 标签向量行归一化（与 qn_tag 点积即 tag_cos）
+    rn = np.asarray(P.multiply(P).sum(axis=1)).ravel()
+    inv = np.zeros(n_items)
+    nz = rn > 0
+    inv[nz] = 1.0 / np.sqrt(rn[nz])
+    Pn = (sp.diags(inv) @ P).tocsr()
+
+    old_mask = np.zeros(n_items, dtype=bool)
+    for i, sid in enumerate(items):
+        d = subject_meta[sid].get("date") or ""
+        if d[:4].isdigit() and int(d[:4]) < old_year:
+            old_mask[i] = True
+    return P, Pn, old_mask
+
+
 class Recommender:
     """从 SQLite 语料加载进内存；构造注入，可测试。"""
 
@@ -231,6 +293,8 @@ class Recommender:
         df_min_rated: int = 0,         # 2026-08-12 去热分母只计评分条数≥该值的重度用户（剔除轻度用户回暖热门）；0=全语料
         rate_center: float = 5.0,      # 2026-08-12 相似度中心化（仅相似度）：Bn 用 idf*(rate-rate_center)，打分 A 保持 idf*rate。5 分中界——1-4 负偏好、5 中性、6-10 正偏好；0=全原始分
         idf_in_score: bool = True,     # 2026-08-13 打分矩阵 A 是否带 idf 乘子（分子 idf 实验）：False=去掉（A 保持原分），相似度 Bn/q 的 idf 保留。实测 noA 比全去更好
+        old_tag_beta: float = 0.0,     # 2026-08-18 老动画标签 boost 倍率（路由 A 打分层）：0=关；>0 时除热后对老候选加 β×scale×tag_cos（原型验证 β=0.5 新口味老番 t10 8.9%→19.1%，NDCG/Recall 不降）
+        old_tag_year: int = 2010,      # "老动画"年份上界：date < 该值 视为老（.env OLD_TAG_YEAR 可调）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -246,6 +310,8 @@ class Recommender:
         self._df_min_rated = df_min_rated
         self._rate_center = rate_center
         self._idf_in_score = idf_in_score
+        self._old_tag_beta = old_tag_beta
+        self._old_tag_year = old_tag_year
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -419,6 +485,14 @@ class Recommender:
             dtype=bool,
         )
 
+        # 老动画标签 boost 基建（2026-08-18 路由 A 打分层，见 build_tags/ADR 0008）：
+        # old_tag_beta>0 时 recommend() 触发；=0 时纯标签矩阵不影响任何输出（无分支进入）。
+        self._tag_P, self._tag_Pn, self._tag_old_mask = build_tags(
+            self._items, self.subject_meta, self._old_tag_year
+        )
+        self._tag_vocab = self._tag_P.shape[1]
+        self._tag_old_count = int(self._tag_old_mask.sum())
+
     # ---- 对外接口 ------------------------------------------------
 
     def _calibrate_gamma(
@@ -532,6 +606,22 @@ class Recommender:
             scores = scores / np.power(self._df + 1, self._last_gamma)
         else:
             self._last_gamma = self._gamma if not self._adaptive_gamma else 0.0
+
+        # 老动画标签 boost（2026-08-18 路由 A 打分层）：除热后对老候选(date<old_tag_year, 池内)
+        # 加 β×scale×tag_cos(q_tag, item_tag)。scale = 该用户池内除热后分数的 90 分位，把
+        # boost 归一化到可比较尺度。只对老候选生效——近年部分原样，用户没信号的老年代才靠题材
+        # 补相关性，非硬塞。原型 scripts/proto_old_tag.py（生产同源配置）验证：新口味用户
+        # 老番 t10 8.9%→19.1%(β=0.5)/41.6%(β=1.0)，NDCG/Recall 不降反升；β=2.0 过冲。
+        if self._old_tag_beta > 0 and pool:
+            q_tag = self._tag_P.T.dot(q)
+            qn_tag = q_tag / (np.sqrt((q_tag * q_tag).sum()) + 1e-9)
+            pidx = np.asarray(pool, dtype=np.int64)
+            cos_pool = np.asarray(self._tag_Pn[pidx].dot(qn_tag)).ravel()
+            oldp = self._tag_old_mask[pidx]
+            if oldp.any():
+                sc_pool = scores[pidx]
+                scale = float(np.percentile(sc_pool, 90)) if len(sc_pool) else 0.0
+                scores[pidx[oldp]] += self._old_tag_beta * max(scale, 1e-9) * cos_pool[oldp]
         top = sorted(pool, key=lambda i: -scores[i])[:k]
 
         def _rec(i: int) -> Recommendation:
@@ -557,6 +647,10 @@ class Recommender:
             "df_min_rated": self._df_min_rated,
             "rate_center": self._rate_center,
             "idf_in_score": self._idf_in_score,
+            "old_tag_beta": self._old_tag_beta,
+            "old_tag_year": self._old_tag_year,
+            "tag_vocab": self._tag_vocab,
+            "tag_old_count": self._tag_old_count,
             "blend_lambda": self._blend_lambda,
             "last_gamma": self._last_gamma,
             "franchise_groups": len({int(r) for r in self._fr}),

@@ -88,7 +88,7 @@ python -m scripts.measure_hotness --users 500              # 热度分布对比�
 
 ## 决策记录
 
-关键取舍见 `docs/adr/`（0001 IDF 加权、0002 冷门配额、0003 franchise 去重、0005 评分加权、0006 两区改版、0007 Bangumi OAuth 登录）。两区推荐已于 2026-08-11 下线，`docs/PLAN.md` 含演进过程。
+关键取舍见 `docs/adr/`（0001 IDF 加权、0002 冷门配额、0003 franchise 去重、0005 评分加权、0006 两区改版、0007 Bangumi OAuth 登录、0008 老动画可见性研究、0009 老动画标签打分层）。两区推荐已于 2026-08-11 下线，`docs/PLAN.md` 含演进过程。
 
 ## 运维注意
 
