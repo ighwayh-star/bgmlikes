@@ -111,6 +111,10 @@ def create_app() -> FastAPI:
     # idf_in_score：打分矩阵 A 是否带 idf 乘子（0=去掉，相似度 Bn/q 的 idf 保留），.env 可调
     # tag_beta_all：全池标签 boost（题材浮现，不限年代；0=关；0.25=混合档全池部分），.env 可调
     # old_tag_beta：老候选额外标签 boost（深盲区老题材救援；0=关；0.5=路由 A 档），.env 可调
+    # era_gap_beta：年份差 boost（正确算法版，替代全局 2010 门：锚点=相似用户平均观看年份，
+    #   无年份常量、天然对称；0=关；见 src/recommender.py），.env 可调
+    # era_gap_year_span：年份差权重饱和跨度（Δ=span 时 f=1），.env 可调
+    # era_gap_shape：权重形状 'log'（log1p 饱和，对称性好）/ 'lin'（线性 clip），.env 可调
     recommender = Recommender(
         DB_PATH, df_min_rated=int(load_optional("DF_MIN_RATED", "300")),
         rate_center=float(load_optional("RATE_CENTER", "5")),
@@ -118,6 +122,9 @@ def create_app() -> FastAPI:
         tag_beta_all=float(load_optional("TAG_BETA_ALL", "0")),
         old_tag_beta=float(load_optional("OLD_TAG_BETA", "0")),
         old_tag_year=int(load_optional("OLD_TAG_YEAR", "2010")),
+        era_gap_beta=float(load_optional("ERA_GAP_BETA", "0")),
+        era_gap_year_span=float(load_optional("ERA_GAP_YEAR_SPAN", "50")),
+        era_gap_shape=load_optional("ERA_GAP_SHAPE", "log"),
     )
     cover_cache = CoverCache(COVER_DIR, api)  # 封面图中转（大陆直连 lain.bgm.tv 超时）
     auth = AuthStore(AUTH_DB_PATH)  # 用户登录会话 + "不感兴趣"偏好（独立 auth.db）

@@ -296,6 +296,9 @@ class Recommender:
         tag_beta_all: float = 0.0,     # 2026-08-18 全池标签 boost（题材浮现，不限年代）：>0 时所有池内候选加 β×scale×tag_cos（用户真实需求——题材贴但邻居没覆盖的作品浮现）；老候选再叠加 old_tag_beta
         old_tag_beta: float = 0.0,     # 2026-08-18 老动画标签 boost 额外倍率（在 tag_beta_all 之上）：0=关；>0 时老候选(date<old_tag_year)再加 β×scale×tag_cos（深盲区老题材救援）。仅开它 = 原仅老版本，向后兼容
         old_tag_year: int = 2010,      # "老动画"年份上界：date < 该值 视为老（.env OLD_TAG_YEAR 可调）
+        era_gap_beta: float = 0.0,     # 2026-08-18 年份差 boost（正确算法版，替代年份门控）：>0 时对池内候选加 λ×scale×cos_i×f(|year_i − anchor|)，anchor = 相似用户（sim 加权）的平均观看年份，逐用户自适应。无全局年份常量、天然对称：新口味邻居锚点新→救老题材；老口味邻居锚点老→救新题材（老口味用户新番概率不再被全局门压低）。tag_cos 做相关度守门，非硬塞
+        era_gap_year_span: float = 50.0,  # 年份差权重 f 的饱和跨度：Δ=year_span 时 f=1（.env ERA_GAP_YEAR_SPAN 可调）
+        era_gap_shape: str = "log",    # 年份差权重形状：'log'=log1p(Δ)/log1p(span) 对数饱和（推荐，对称性好）；'lin'=Δ/span 线性 clip
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -314,6 +317,9 @@ class Recommender:
         self._tag_beta_all = tag_beta_all
         self._old_tag_beta = old_tag_beta
         self._old_tag_year = old_tag_year
+        self._era_gap_beta = era_gap_beta
+        self._era_gap_year_span = era_gap_year_span
+        self._era_gap_shape = era_gap_shape
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -357,6 +363,13 @@ class Recommender:
         self._iidx = {sid: i for i, sid in enumerate(self._items)}
         n_items = len(self._items)
 
+        # 每部动画的首播年份（era gap boost 用）：date 前 4 位有效才计入，缺失=0
+        self._item_year = np.zeros(n_items, dtype=np.float64)
+        for i, sid in enumerate(self._items):
+            d = self.subject_meta[sid].get("date") or ""
+            if d[:4].isdigit():
+                self._item_year[i] = int(d[:4])
+
         # 第二遍：按用户流式收集训练对 + 评分（用户索引按首次出现递增；索引序即 user_hash 序）
         ui_list: list[int] = []
         ii_list: list[int] = []
@@ -386,6 +399,15 @@ class Recommender:
                 ui_list.append(uid - 1)
                 ii_list.append(ii)
                 rate_list.append(rate)
+
+        # 每用户"已看动画年份"聚合（era gap 的锚点数据，2026-08-18）：
+        # user_year_sum[u] = Σ 用户 u 看过条目的年份（只计有有效日期的），user_year_cnt[u] = 有效条数。
+        # 相似用户平均观看年份 = Σ(sim·year_sum) / Σ(sim·cnt)——按 sim 加权、且条数多的用户置信度更高。
+        _ii_arr = np.asarray(ii_list, dtype=np.int64)
+        _ui_arr = np.asarray(ui_list, dtype=np.int64)
+        _y_pair = self._item_year[_ii_arr]
+        self._user_year_sum = np.bincount(_ui_arr, weights=_y_pair, minlength=uid).astype(np.float64)
+        self._user_year_cnt = np.bincount(_ui_arr, weights=(_y_pair > 0), minlength=uid).astype(np.float64)
 
         # franchise：同一部动画的不同季/续作/剧场版/番外（见 build_franchise 与 docs/adr/0003）
         self._franchise_root = build_franchise(self._items, conn)
@@ -538,6 +560,24 @@ class Recommender:
                 hi = mid
         return (lo + hi) / 2
 
+    def _neighbor_avg_year(self, q: np.ndarray) -> float:
+        """相似用户的平均观看年份（era gap 锚点）。
+
+        与 score_items 同源：sim = Bn @ qn 取 top-knn，锚点 = Σ(sim·year_sum)/Σ(sim·cnt)
+        ——sim 加权均值，且已看条数多的用户置信度更高。返回 0 表示无可靠年代锚点
+        （冷启动 / 邻居都没有有效日期），调用方应跳过 era boost。
+        """
+        if (q != 0).sum() < self._min_profile:
+            return 0.0
+        qn = q / np.sqrt((q * q).sum())
+        sim = np.asarray(self._Bn @ qn).ravel()
+        idx = np.argpartition(-sim, self._knn)[:self._knn]
+        num = float(sim[idx] @ self._user_year_sum[idx])
+        den = float(sim[idx] @ self._user_year_cnt[idx])
+        if den < 1e-9:
+            return 0.0
+        return num / den
+
     def recommend(
         self,
         profile: list[CollectionEntry],
@@ -609,27 +649,38 @@ class Recommender:
         else:
             self._last_gamma = self._gamma if not self._adaptive_gamma else 0.0
 
-        # 标签 boost（2026-08-18 路由 A 打分层 + 2026-08-18 全池推广）：除热后给池内候选加
-        # β×scale×tag_cos(q_tag, item_tag)。scale = 该用户池内除热后分数的 90 分位，把 boost
-        # 归一化到可比较尺度。tag_cos 不依赖邻居是否看过——题材贴就加分，正好补"邻居都是新动画
-        # 观看者 → 用户感兴趣题材（多为老/冷门）base≈0"的盲区，非保底硬塞。
-        #   tag_beta_all：全池统一乘子（题材浮现，不限年代）
-        #   old_tag_beta：老候选(date<old_tag_year)在 tag_beta_all 之上再叠加的额外乘子（深盲区老题材救援）
-        # 原型 scripts/proto_tag_allpool.py（生产同源配置）验证：全池0.25+老0.5 混合档
-        # NDCG +0.0044/Recall +0.0012/深盲区浮现 0.18/题材覆盖 +0.061，新/中/老三组全升，
-        # 热占比 +1.2pp；纯仅老(新口味老t10 8.9→19.1%)与纯全池(中口味 NDCG +0.0065)各赢一半。
-        if (self._tag_beta_all > 0 or self._old_tag_beta > 0) and pool:
+        # 标签 boost（2026-08-18 全池混合档 A_hyb + 年份差 era gap）：除热后给池内候选加
+        # max(scale,1e-9) × boost，scale = 该用户池内除热后分数的 90 分位，boost 由两部分组成：
+        #   ① tag_beta_all × cos_i                  —— 全池题材浮现（用户真实需求：题材贴但邻居没覆盖的作品）
+        #      + old_tag_beta × cos_i × [date<old_tag_year]  —— 老候选额外救援（深盲区老题材，向后兼容原仅老版）
+        #   ② era_gap_beta × f(|year_i − anchor|) × cos_i —— 年份差 boost（正确算法版，替代全局 2010 门）：
+        #      anchor = 相似用户平均观看年份（_neighbor_avg_year，sim 加权、逐用户自适应）；
+        #      f = clip(Δ / era_gap_year_span, 0, 1)。无年份常量、天然对称：新口味邻居锚点新→救老题材，
+        #      老口味邻居锚点老→救新题材（老口味用户新番概率不再被全局门压低）。tag_cos 做相关度守门，非硬塞。
+        # ③ 旧参数 tag_beta_all / old_tag_beta（年份门控版）保留用于回滚与对比。
+        if (self._tag_beta_all > 0 or self._old_tag_beta > 0 or self._era_gap_beta > 0) and pool:
             q_tag = self._tag_P.T.dot(q)
             qn_tag = q_tag / (np.sqrt((q_tag * q_tag).sum()) + 1e-9)
             pidx = np.asarray(pool, dtype=np.int64)
             cos_pool = np.asarray(self._tag_Pn[pidx].dot(qn_tag)).ravel()
-            oldp = self._tag_old_mask[pidx]
-            if oldp.any() or self._tag_beta_all > 0:
-                sc_pool = scores[pidx]
-                scale = float(np.percentile(sc_pool, 90)) if len(sc_pool) else 0.0
-                boost = self._tag_beta_all * cos_pool
+            sc_pool = scores[pidx]
+            scale = float(np.percentile(sc_pool, 90)) if len(sc_pool) else 0.0
+            boost = np.zeros(len(pidx))
+            if self._tag_beta_all > 0:
+                boost += self._tag_beta_all * cos_pool
+            if self._old_tag_beta > 0:
+                oldp = self._tag_old_mask[pidx]
                 boost[oldp] += self._old_tag_beta * cos_pool[oldp]
-                scores[pidx] += max(scale, 1e-9) * boost
+            if self._era_gap_beta > 0:
+                anchor = self._neighbor_avg_year(q)
+                if anchor > 0:
+                    dy = np.abs(self._item_year[pidx] - anchor)
+                    if self._era_gap_shape == "log":
+                        w = np.clip(np.log1p(dy) / np.log1p(max(self._era_gap_year_span, 1e-9)), 0.0, 1.0)
+                    else:
+                        w = np.clip(dy / max(self._era_gap_year_span, 1e-9), 0.0, 1.0)
+                    boost += self._era_gap_beta * w * cos_pool
+            scores[pidx] += max(scale, 1e-9) * boost
         top = sorted(pool, key=lambda i: -scores[i])[:k]
 
         def _rec(i: int) -> Recommendation:
@@ -658,6 +709,9 @@ class Recommender:
             "old_tag_beta": self._old_tag_beta,
             "tag_beta_all": self._tag_beta_all,
             "old_tag_year": self._old_tag_year,
+            "era_gap_beta": self._era_gap_beta,
+            "era_gap_year_span": self._era_gap_year_span,
+            "era_gap_shape": self._era_gap_shape,
             "tag_vocab": self._tag_vocab,
             "tag_old_count": self._tag_old_count,
             "blend_lambda": self._blend_lambda,
