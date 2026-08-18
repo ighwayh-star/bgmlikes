@@ -328,13 +328,17 @@ async function recommend() {
   const username = q.value.trim();
   if (!username) return;
   err.classList.add('hidden');
-  list.innerHTML = '';
-  restore.classList.add('hidden');
-  restore.innerHTML = '';
+  // 同用户刷新（换人/重打才真正清空）：保留当前列表避免闪烁，期间 meta 提示"刷新中"
+  const sameUser = !!(lastData && lastData.username === username);
+  if (!sameUser) {
+    list.innerHTML = '';
+    restore.classList.add('hidden');
+    restore.innerHTML = '';
+    exportBtn.disabled = true;
+  }
   shuffleBtn.classList.add('hidden');
-  meta.textContent = '正在拉取用户数据…';
+  meta.textContent = sameUser ? '正在刷新推荐…' : '正在拉取用户数据…';
   go.disabled = true;
-  exportBtn.disabled = true;
   try {
     const res = await fetch('/v1/recommend', {
       method: 'POST',
@@ -360,7 +364,8 @@ async function recommend() {
   } catch (e) {
     err.classList.remove('hidden');
     err.textContent = e.message;
-    meta.textContent = '';
+    if (sameUser) updateMeta();  // 刷新失败：旧列表还在，恢复旧 meta
+    else meta.textContent = '';
   } finally {
     go.disabled = false;
   }

@@ -28,7 +28,7 @@ from src.auth import (
     exchange_code,
     fetch_me,
 )
-from src.bangumi_api import BangumiAPI
+from src.bangumi_api import BangumiAPI, CollectionEntry
 from src.config import load_optional, load_token
 from src.dataset import APISource, CacheSource
 from src.images import CoverCache
@@ -50,6 +50,12 @@ COLLECTED_STATES = {"在看", "看过", "想看", "搁置"}
 # /daily/collected 内存缓存（重用户收藏数百条，拉取数秒；5 分钟 TTL 避免每次页面加载都打 Bangumi）
 _COLLECTED_CACHE: dict[int, tuple[float, list[dict]]] = {}
 _COLLECTED_TTL = 300
+# /v1/recommend 收藏拉取缓存：拉取是推荐最耗时环节（分页 + 0.5s 节流，重用户 3-15s），
+# 重算仅 ~50ms，故缓存"拉取结果"而非推荐输出（算法改动即时生效、换一批不受影响）。
+# 只缓存 API 实时路径成功结果（cache 降级结果廉价且可能过期，不缓存）。TTL 可调。
+_RECOMMEND_CACHE: dict[str, tuple[float, str, list[CollectionEntry]]] = {}
+_RECOMMEND_TTL = int(load_optional("RECOMMEND_CACHE_TTL", "600"))
+_RECOMMEND_CACHE_MAX = 1000  # 防长期膨胀：超出 FIFO 删最旧
 
 
 def _cookie_max_age() -> int:
@@ -329,23 +335,31 @@ def create_app() -> FastAPI:
         if not (1 <= req.k <= 300):
             raise HTTPException(status_code=400, detail="k 须在 1~300 之间")
 
-        data_source = "api"
-        try:
-            entries = source.collections_for(username, max_seconds=15)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise HTTPException(status_code=404, detail=f"用户不存在：{username}")
-            # 非 404 的 API 故障：降级到本地语料（已爬取用户仍可服务）
-            entries = cache_source.collections_for(username)
-            if not entries:
-                raise HTTPException(status_code=502, detail=f"Bangumi API 错误：{e.response.status_code}")
-            data_source = "cache"
-        except (httpx.HTTPError, RuntimeError) as e:
-            logger.exception("拉取收藏失败（尝试本地降级）：%s", username)
-            entries = cache_source.collections_for(username)
-            if not entries:
-                raise HTTPException(status_code=502, detail="Bangumi API 暂时不可用，请稍后重试")
-            data_source = "cache"
+        cached = _RECOMMEND_CACHE.get(username)
+        if cached and time.time() - cached[0] < _RECOMMEND_TTL:
+            _ts, data_source, entries = cached  # TTL 内免打 Bangumi（重算仅 ~50ms）
+        else:
+            data_source = "api"
+            try:
+                entries = source.collections_for(username, max_seconds=15)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    raise HTTPException(status_code=404, detail=f"用户不存在：{username}")
+                # 非 404 的 API 故障：降级到本地语料（已爬取用户仍可服务）
+                entries = cache_source.collections_for(username)
+                if not entries:
+                    raise HTTPException(status_code=502, detail=f"Bangumi API 错误：{e.response.status_code}")
+                data_source = "cache"
+            except (httpx.HTTPError, RuntimeError) as e:
+                logger.exception("拉取收藏失败（尝试本地降级）：%s", username)
+                entries = cache_source.collections_for(username)
+                if not entries:
+                    raise HTTPException(status_code=502, detail="Bangumi API 暂时不可用，请稍后重试")
+                data_source = "cache"
+            if data_source == "api":
+                _RECOMMEND_CACHE[username] = (time.time(), data_source, entries)
+                if len(_RECOMMEND_CACHE) > _RECOMMEND_CACHE_MAX:
+                    _RECOMMEND_CACHE.pop(next(iter(_RECOMMEND_CACHE)))  # FIFO 删最旧
 
         already = {e.subject_id for e in entries}
         profile = [e for e in entries if e.state == "看过" and e.rate > 0]
