@@ -293,7 +293,8 @@ class Recommender:
         df_min_rated: int = 0,         # 2026-08-12 去热分母只计评分条数≥该值的重度用户（剔除轻度用户回暖热门）；0=全语料
         rate_center: float = 5.0,      # 2026-08-12 相似度中心化（仅相似度）：Bn 用 idf*(rate-rate_center)，打分 A 保持 idf*rate。5 分中界——1-4 负偏好、5 中性、6-10 正偏好；0=全原始分
         idf_in_score: bool = True,     # 2026-08-13 打分矩阵 A 是否带 idf 乘子（分子 idf 实验）：False=去掉（A 保持原分），相似度 Bn/q 的 idf 保留。实测 noA 比全去更好
-        old_tag_beta: float = 0.0,     # 2026-08-18 老动画标签 boost 倍率（路由 A 打分层）：0=关；>0 时除热后对老候选加 β×scale×tag_cos（原型验证 β=0.5 新口味老番 t10 8.9%→19.1%，NDCG/Recall 不降）
+        tag_beta_all: float = 0.0,     # 2026-08-18 全池标签 boost（题材浮现，不限年代）：>0 时所有池内候选加 β×scale×tag_cos（用户真实需求——题材贴但邻居没覆盖的作品浮现）；老候选再叠加 old_tag_beta
+        old_tag_beta: float = 0.0,     # 2026-08-18 老动画标签 boost 额外倍率（在 tag_beta_all 之上）：0=关；>0 时老候选(date<old_tag_year)再加 β×scale×tag_cos（深盲区老题材救援）。仅开它 = 原仅老版本，向后兼容
         old_tag_year: int = 2010,      # "老动画"年份上界：date < 该值 视为老（.env OLD_TAG_YEAR 可调）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
@@ -310,6 +311,7 @@ class Recommender:
         self._df_min_rated = df_min_rated
         self._rate_center = rate_center
         self._idf_in_score = idf_in_score
+        self._tag_beta_all = tag_beta_all
         self._old_tag_beta = old_tag_beta
         self._old_tag_year = old_tag_year
         self._hot_rank_threshold = hot_rank_threshold
@@ -607,21 +609,27 @@ class Recommender:
         else:
             self._last_gamma = self._gamma if not self._adaptive_gamma else 0.0
 
-        # 老动画标签 boost（2026-08-18 路由 A 打分层）：除热后对老候选(date<old_tag_year, 池内)
-        # 加 β×scale×tag_cos(q_tag, item_tag)。scale = 该用户池内除热后分数的 90 分位，把
-        # boost 归一化到可比较尺度。只对老候选生效——近年部分原样，用户没信号的老年代才靠题材
-        # 补相关性，非硬塞。原型 scripts/proto_old_tag.py（生产同源配置）验证：新口味用户
-        # 老番 t10 8.9%→19.1%(β=0.5)/41.6%(β=1.0)，NDCG/Recall 不降反升；β=2.0 过冲。
-        if self._old_tag_beta > 0 and pool:
+        # 标签 boost（2026-08-18 路由 A 打分层 + 2026-08-18 全池推广）：除热后给池内候选加
+        # β×scale×tag_cos(q_tag, item_tag)。scale = 该用户池内除热后分数的 90 分位，把 boost
+        # 归一化到可比较尺度。tag_cos 不依赖邻居是否看过——题材贴就加分，正好补"邻居都是新动画
+        # 观看者 → 用户感兴趣题材（多为老/冷门）base≈0"的盲区，非保底硬塞。
+        #   tag_beta_all：全池统一乘子（题材浮现，不限年代）
+        #   old_tag_beta：老候选(date<old_tag_year)在 tag_beta_all 之上再叠加的额外乘子（深盲区老题材救援）
+        # 原型 scripts/proto_tag_allpool.py（生产同源配置）验证：全池0.25+老0.5 混合档
+        # NDCG +0.0044/Recall +0.0012/深盲区浮现 0.18/题材覆盖 +0.061，新/中/老三组全升，
+        # 热占比 +1.2pp；纯仅老(新口味老t10 8.9→19.1%)与纯全池(中口味 NDCG +0.0065)各赢一半。
+        if (self._tag_beta_all > 0 or self._old_tag_beta > 0) and pool:
             q_tag = self._tag_P.T.dot(q)
             qn_tag = q_tag / (np.sqrt((q_tag * q_tag).sum()) + 1e-9)
             pidx = np.asarray(pool, dtype=np.int64)
             cos_pool = np.asarray(self._tag_Pn[pidx].dot(qn_tag)).ravel()
             oldp = self._tag_old_mask[pidx]
-            if oldp.any():
+            if oldp.any() or self._tag_beta_all > 0:
                 sc_pool = scores[pidx]
                 scale = float(np.percentile(sc_pool, 90)) if len(sc_pool) else 0.0
-                scores[pidx[oldp]] += self._old_tag_beta * max(scale, 1e-9) * cos_pool[oldp]
+                boost = self._tag_beta_all * cos_pool
+                boost[oldp] += self._old_tag_beta * cos_pool[oldp]
+                scores[pidx] += max(scale, 1e-9) * boost
         top = sorted(pool, key=lambda i: -scores[i])[:k]
 
         def _rec(i: int) -> Recommendation:
@@ -648,6 +656,7 @@ class Recommender:
             "rate_center": self._rate_center,
             "idf_in_score": self._idf_in_score,
             "old_tag_beta": self._old_tag_beta,
+            "tag_beta_all": self._tag_beta_all,
             "old_tag_year": self._old_tag_year,
             "tag_vocab": self._tag_vocab,
             "tag_old_count": self._tag_old_count,
