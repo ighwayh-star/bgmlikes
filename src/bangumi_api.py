@@ -108,6 +108,20 @@ class BangumiAPI:
             time.sleep(2**min(attempt, 3))
         raise RuntimeError(f"拉取封面图 {subject_id} 失败") from last_exc
 
+    def fetch_subject(
+        self,
+        subject_id: int,
+        *,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """取条目完整信息（含简介 summary 字段）。
+
+        复用 _get 的节流 / 429 重试 / 退避。404 抛 httpx.HTTPStatusError（调用方转 404）；
+        网络失败或超时抛 RuntimeError。浮窗端点必须传 deadline（_get 默认重试 5 次，
+        纯 5xx 最坏退避可达数十秒——deadline 约束单次请求与总时长，超时快速转 502）。
+        """
+        return self._get(f"/v0/subjects/{subject_id}", deadline=deadline)
+
     def fetch_collections(
         self,
         username: str,

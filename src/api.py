@@ -33,6 +33,7 @@ from src.config import load_optional, load_token
 from src.dataset import APISource, CacheSource
 from src.images import CoverCache
 from src.recommender import Recommendation, Recommender
+from src.subject_store import SubjectStore
 
 logger = logging.getLogger("bgmlikes")
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "collections.db"
@@ -102,6 +103,28 @@ class RecommendResponse(BaseModel):
     source: str = "api"  # "api" 实时拉取 / "cache" 本地语料降级（Bangumi 宕机时）
 
 
+class SimilarOut(BaseModel):
+    subject_id: int
+    name: str
+    rating: float = 0
+    popularity_rank: int = 0
+    score: float = 0
+
+
+class SubjectOut(BaseModel):
+    subject_id: int
+    name: str  # 显示名（name_cn or name）
+    name_cn: str = ""
+    name_ja: str = ""
+    summary: str = ""  # 纯文本简介（前端再清洗渲染）
+    rating: float = 0  # BGM 平均分
+    date: str = ""
+    tags: list[str] = []  # meta_tags（题材标签）
+    nsfw: bool = False
+    in_corpus: bool = True  # 是否在推荐语料（无人收藏过 = False → 前端显示"暂无相似"）
+    similar: list[SimilarOut] = []
+
+
 def create_app() -> FastAPI:
     api = BangumiAPI(load_token())
     source = APISource(api)
@@ -115,6 +138,7 @@ def create_app() -> FastAPI:
     #   无年份常量、天然对称；0=关；见 src/recommender.py），.env 可调
     # era_gap_year_span：年份差权重饱和跨度（Δ=span 时 f=1），.env 可调
     # era_gap_shape：权重形状 'log'（log1p 饱和，对称性好）/ 'lin'（线性 clip），.env 可调
+    # similar_alpha：浮窗"相似动画"混合系数（α×标签余弦 + (1−α)×共同观看余弦），.env 可调
     recommender = Recommender(
         DB_PATH, df_min_rated=int(load_optional("DF_MIN_RATED", "300")),
         rate_center=float(load_optional("RATE_CENTER", "5")),
@@ -125,8 +149,10 @@ def create_app() -> FastAPI:
         era_gap_beta=float(load_optional("ERA_GAP_BETA", "0")),
         era_gap_year_span=float(load_optional("ERA_GAP_YEAR_SPAN", "50")),
         era_gap_shape=load_optional("ERA_GAP_SHAPE", "log"),
+        similar_alpha=float(load_optional("SIMILAR_ALPHA", "0.5")),
     )
     cover_cache = CoverCache(COVER_DIR, api)  # 封面图中转（大陆直连 lain.bgm.tv 超时）
+    subject_store = SubjectStore(DB_PATH, api)  # 卡片浮窗简介：本地表 → 缓存表 → 实时拉取
     auth = AuthStore(AUTH_DB_PATH)  # 用户登录会话 + "不感兴趣"偏好（独立 auth.db）
     logger.info("recommender loaded: %s", recommender.stats())
     logger.info("oauth logged: %s", oauth_configured())
@@ -356,6 +382,48 @@ def create_app() -> FastAPI:
             content=data,
             media_type=ctype,
             headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    @app.get("/api/subject/{subject_id}", response_model=SubjectOut)
+    def subject_detail(subject_id: int) -> SubjectOut:
+        """卡片浮窗：条目详情（简介 + 相似动画）。
+
+        简介三级链（SubjectStore）：本地 subjects 表 → 缓存表 → 实时 Bangumi 拉取并落库。
+        相似动画本地算（Recommender.similar_items，混合标签余弦 + 共同观看余弦）。
+        404：条目不在本地语料 / Bangumi 不存在；502：实时拉简介失败（前端 error 态，不阻塞页面）。
+        """
+        meta = recommender.subject_meta.get(subject_id)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="条目不在本地语料中")
+        try:
+            summary = subject_store.summary(subject_id, deadline=time.monotonic() + 8)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise HTTPException(status_code=404, detail="Bangumi 上不存在该条目") from e
+            logger.exception("拉取条目简介失败（HTTP %s）：%s", e.response.status_code, subject_id)
+            raise HTTPException(status_code=502,
+                                detail=f"Bangumi API 错误：{e.response.status_code}") from e
+        except RuntimeError as e:
+            logger.exception("拉取条目简介失败：%s", subject_id)
+            raise HTTPException(status_code=502, detail=f"拉取简介失败：{e}") from e
+
+        similar = [
+            SimilarOut(subject_id=s.subject_id, name=s.name, rating=s.rating,
+                       popularity_rank=s.popularity_rank, score=s.score)
+            for s in recommender.similar_items(subject_id, k=10)
+        ] if subject_id in recommender._iidx else []
+        return SubjectOut(
+            subject_id=subject_id,
+            name=meta.get("name") or meta.get("name_ja") or "",
+            name_cn=meta.get("name_cn") or "",
+            name_ja=meta.get("name_ja") or "",
+            summary=summary,
+            rating=meta.get("score", 0.0),
+            date=meta.get("date") or "",
+            tags=meta.get("meta_tags") or [],
+            nsfw=bool(meta.get("nsfw")),
+            in_corpus=subject_id in recommender._iidx,
+            similar=similar,
         )
 
     @app.get("/")

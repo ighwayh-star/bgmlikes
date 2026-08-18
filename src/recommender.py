@@ -32,6 +32,17 @@ class Recommendation:
 
 
 @dataclass(frozen=True)
+class SimilarItem:
+    """浮窗"相似动画"条目（卡片详情用，算法见 Recommender.similar_items）。"""
+
+    subject_id: int
+    name: str
+    rating: float = 0.0  # BGM 平均分
+    popularity_rank: int = 0
+    score: float = 0.0  # 混合相似度（标签余弦 × 共同观看余弦）
+
+
+@dataclass(frozen=True)
 class RecommendResult:
     """单区推荐结果（2026-08-11 删冷门发现后）。
 
@@ -299,6 +310,7 @@ class Recommender:
         era_gap_beta: float = 0.0,     # 2026-08-18 年份差 boost（正确算法版，替代年份门控）：>0 时对池内候选加 λ×scale×cos_i×f(|year_i − anchor|)，anchor = 相似用户（sim 加权）的平均观看年份，逐用户自适应。无全局年份常量、天然对称：新口味邻居锚点新→救老题材；老口味邻居锚点老→救新题材（老口味用户新番概率不再被全局门压低）。tag_cos 做相关度守门，非硬塞
         era_gap_year_span: float = 50.0,  # 年份差权重 f 的饱和跨度：Δ=year_span 时 f=1（.env ERA_GAP_YEAR_SPAN 可调）
         era_gap_shape: str = "log",    # 年份差权重形状：'log'=log1p(Δ)/log1p(span) 对数饱和（推荐，对称性好）；'lin'=Δ/span 线性 clip
+        similar_alpha: float = 0.5,    # 相似动画混合系数：α×标签余弦 + (1−α)×共同观看余弦（浮窗"相似"用，.env SIMILAR_ALPHA 可调）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -320,6 +332,7 @@ class Recommender:
         self._era_gap_beta = era_gap_beta
         self._era_gap_year_span = era_gap_year_span
         self._era_gap_shape = era_gap_shape
+        self._similar_alpha = similar_alpha
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -466,6 +479,9 @@ class Recommender:
         _, self._Bn, _ = build_encoding(
             uid, n_items, ui_list, ii_list, values=raw - self._rate_center,
         )
+        # 转置缓存（浮窗相似动画用）：CSR.T → CSC 共享 data、近零拷贝。_A 构建后不可变，
+        # 供 co-watch 余弦一次 matvec（_A_T @ col），避免每次重算转置。
+        self._A_T = self._A.T
 
         # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：按训练对 bincount 计看过人数
         # （不看评分值——中心化后 rate=5 的条目权重为 0，若按 A 非零行计会漏掉实际看过的人）。
@@ -577,6 +593,68 @@ class Recommender:
         if den < 1e-9:
             return 0.0
         return num / den
+
+    def similar_items(
+        self,
+        sid: int,
+        k: int = 10,
+        alpha: float | None = None,
+    ) -> list[SimilarItem]:
+        """条目详情浮窗的"相似动画"：混合 α×标签余弦 + (1−α)×共同观看余弦。
+
+        两个信号都是一次 matvec，不物化 n_items² 全矩阵：
+        - tag_cos[i] = Pn[i]·Pn[target]（Pn 行已 L2 归一化 → 余弦），题材亲和。
+        - co_watch_cos[i] = dot(col_i, col_j) / (‖col_i‖·‖col_j‖)，列范数归一（idf 在
+          余弦里抵消，与 A 是否带 idf 无关）；A 的列=条目被哪些用户看过/打分。
+        过滤：自身 / 同 franchise / 番外·剧场版(type-11) / 非日本动画（与推荐池同口径）。
+        不在语料（_iidx 未命中）→ 返回空列表（调用方显示"暂无相似"）。
+        """
+        if alpha is None:
+            alpha = self._similar_alpha
+        i = self._iidx.get(sid)
+        if i is None:
+            return []
+        n_items = len(self._items)
+        k = max(1, min(k, 30))
+
+        # ① 标签余弦：Pn 行归一化，行点积即 tag_cos。
+        #    注意：稀疏×稀疏→稀疏，np.asarray(稀疏) 是 0 维 object 数组；目标行转稠密后
+        #    csr.dot(稠密)→稠密 ndarray（recommend() 里 _tag_Pn[pidx].dot(qn_tag) 同款）。
+        tag_row = np.asarray(self._tag_Pn[i].toarray()).ravel()  # (n_tags,) 稠密
+        tag_cos = np.asarray(self._tag_Pn.dot(tag_row)).ravel()  # (n_items,) 稠密
+
+        # ② 共同观看余弦：A 的列 j = 看过 j 的用户向量；A_T @ col_i = 全部 j 与 col_i 的内积
+        col = np.asarray(self._A.getcol(i).todense()).ravel()  # (n_users,) 稠密，避免 CSR 列切
+        raw = np.asarray(self._A_T @ col).ravel()  # (n_items,)
+        # 列范数（按条目）：axis=0 对 items 维求和；axis=1 是每用户——会错。
+        col_norm = np.sqrt(np.asarray(self._A.multiply(self._A).sum(axis=0)).ravel())
+        co = np.zeros(n_items)
+        if col_norm[i] > 1e-9:
+            nz = col_norm > 1e-9
+            co[nz] = raw[nz] / (col_norm[i] * col_norm[nz])
+
+        mixed = alpha * tag_cos + (1.0 - alpha) * co
+
+        mask = np.ones(n_items, dtype=bool)
+        mask[i] = False  # 自身
+        mask[self._fr == self._fr[i]] = False  # 同 franchise（续作/剧场版/系列）
+        mask[self._is_side_content] = False  # 番外/剧场版（type-11）
+        mask[~self._is_jp] = False  # 非日本动画
+        cand = np.flatnonzero(mask)
+        if cand.size == 0:
+            return []
+        top = cand[np.argpartition(-mixed[cand], min(k, cand.size))[:k]]
+        top = top[np.argsort(-mixed[top])]
+        return [
+            SimilarItem(
+                subject_id=self._items[j],
+                name=self.subject_meta[self._items[j]]["name"],
+                rating=self.subject_meta[self._items[j]].get("score", 0.0),
+                popularity_rank=int(self._pop_rank[j]),
+                score=float(mixed[j]),
+            )
+            for j in top
+        ]
 
     def recommend(
         self,
@@ -712,6 +790,7 @@ class Recommender:
             "era_gap_beta": self._era_gap_beta,
             "era_gap_year_span": self._era_gap_year_span,
             "era_gap_shape": self._era_gap_shape,
+            "similar_alpha": self._similar_alpha,
             "tag_vocab": self._tag_vocab,
             "tag_old_count": self._tag_old_count,
             "blend_lambda": self._blend_lambda,

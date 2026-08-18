@@ -88,6 +88,7 @@
     background: var(--card);
     border: 1px solid rgba(255,255,255,.65);
     border-radius: 20px; padding: 14px 18px; margin-top: 14px;
+    cursor: pointer;  /* 点击卡片开详情浮窗 */
     box-shadow: 0 6px 22px rgba(242,109,157,.10), 0 2px 8px rgba(242,109,157,.06);
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
     transition: transform .18s ease, box-shadow .18s ease;
@@ -156,6 +157,52 @@
   .restore .clear:hover { color: var(--accent); border-color: rgba(242,109,157,.5); }
   .err { color: #e85f8d; font-size: 14px; margin-top: 16px; }
   .hidden { display: none; }
+  /* 卡片浮窗：点击卡片 → 简介 + 相似动画（2026-08-18）。overlay 在 .petals(0)/.wrap(1) 之上 */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(74,63,78,.45); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  /* 必须双类：.modal-overlay 定义在 .hidden 之后，单类优先级 display:flex 会覆盖 display:none，
+     导致浮窗始终可见、关不掉（2026-08-18 线上 bug）。双类 (0,2,0) 压过单类 (0,1,0)。 */
+  .modal-overlay.hidden { display: none; }
+  .modal {
+    position: relative; z-index: 1001; width: min(560px, 100%); max-height: 82vh;
+    overflow-y: auto; background: #fff; border-radius: 22px;
+    box-shadow: 0 18px 50px rgba(74,63,78,.35); padding: 22px 20px 20px;
+  }
+  .modal-close {
+    position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; padding: 0;
+    border-radius: 50%; border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.8);
+    color: var(--sub); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: none;
+  }
+  .modal-close:hover { color: var(--accent); border-color: rgba(242,109,157,.5); }
+  .modal-head { display: flex; gap: 16px; }
+  .modal-cover {
+    width: 120px; height: 168px; object-fit: cover; border-radius: 12px;
+    background: #ffe9f2; flex-shrink: 0; box-shadow: 0 2px 10px rgba(242,109,157,.2);
+  }
+  .modal-title { font-size: 19px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+  .modal-rating { color: #e8a33d; font-weight: 700; font-size: 13px; margin-top: 4px; }
+  .modal-date, .modal-sub { color: var(--sub); font-size: 13px; margin-top: 3px; }
+  .modal-tag {
+    display: inline-block; font-size: 11px; padding: 2px 8px; margin: 4px 4px 0 0;
+    border-radius: 999px; background: rgba(242,109,157,.1); color: var(--accent);
+    border: 1px solid rgba(242,109,157,.22);
+  }
+  .modal-section { font-size: 13px; color: var(--sub); font-weight: 700; margin: 16px 0 8px; }
+  .modal-summary { font-size: 14px; line-height: 1.75; color: var(--text); white-space: pre-line; word-break: break-word; }
+  .similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .similar-item {
+    display: flex; gap: 8px; align-items: center; padding: 8px;
+    border: 1px solid rgba(242,109,157,.18); border-radius: 12px; cursor: pointer;
+    background: rgba(255,255,255,.7); transition: border-color .15s, background .15s;
+  }
+  .similar-item:hover { border-color: var(--accent-soft); background: rgba(255,255,255,.95); }
+  .similar-item .sc { width: 38px; height: 52px; object-fit: cover; border-radius: 6px; background: #ffe9f2; flex-shrink: 0; }
+  .similar-item .sc-name { font-size: 13px; overflow-wrap: anywhere; line-height: 1.3; }
+  .similar-item .sc-rate { font-size: 11px; color: #e8a33d; font-weight: 700; margin-top: 2px; }
+  .modal-empty { color: var(--sub); font-size: 13px; }
   /* 小屏适配 */
   @media (max-width: 480px) {
     .wrap { padding: 28px 14px 60px; }
@@ -163,6 +210,10 @@
     .card { padding: 12px 14px; }
     .cover { width: 48px; height: 66px; }
     .card .link { padding: 0 6px; }
+    .modal-overlay { padding: 10px; }
+    .modal { padding: 16px 14px; max-height: 86vh; }
+    .modal-cover { width: 88px; height: 124px; }
+    .similar-grid { grid-template-columns: repeat(2, 1fr); }
   }
 </style>
 </head>
@@ -202,6 +253,14 @@
   <div id="err" class="err hidden"></div>
   <div id="list"></div>
   <div id="restore" class="restore hidden"></div>
+</div>
+
+<!-- 卡片详情浮窗（在 #list 外，内部点击不冒泡进列表委托） -->
+<div id="modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal">
+    <button class="modal-close" aria-label="关闭">✕</button>
+    <div id="modal-body"></div>
+  </div>
 </div>
 
 <script>
@@ -402,7 +461,7 @@ function tagHtml(r) {
 function renderList() {
   const self = viewingSelf();
   list.innerHTML = visibleRecs().map((r, i) => `
-    <div class="card">
+    <div class="card" data-sid="${r.subject_id}" title="点击查看详情">
       <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
       <span class="rank">${i + 1}</span>
       <div class="info">
@@ -487,11 +546,13 @@ async function toggleHidden(sid, toHide) {
   } catch (e) { alert('网络错误，请重试'); }
 }
 
-// 隐藏（"不感兴趣"）点击 → 服务端存 → 列表过滤补位
+// 卡片点击：先短路 .hide（隐藏）与 a.link（BGM/B站外链），再开详情浮窗
 list.addEventListener('click', e => {
-  const b = e.target.closest('.hide');
-  if (!b || !lastData) return;
-  toggleHidden(Number(b.dataset.sid), true);
+  const hideBtn = e.target.closest('.hide');
+  if (hideBtn) { if (!lastData) return; toggleHidden(Number(hideBtn.dataset.sid), true); return; }
+  if (e.target.closest('a.link')) return;      // 外链照常新标签打开
+  const card = e.target.closest('.card');
+  if (card && card.dataset.sid) openModal(Number(card.dataset.sid));
 });
 // 恢复：单项恢复 / 清空全部
 restore.addEventListener('click', e => {
@@ -683,6 +744,89 @@ exportBtn.addEventListener('click', exportJpg);
     petalsEl.appendChild(p);
   }
 })();
+
+/* ---- 卡片详情浮窗：简介 + 相似动画（2026-08-18） ---- */
+const modalOverlay = document.getElementById('modal');
+const modalBody = document.getElementById('modal-body');
+const modalCache = new Map();   // sid -> /api/subject/{id} 响应（同一条目只拉一次）
+let modalOpenSid = null;        // 竞态守卫：连续快点点两张卡，旧请求晚到不覆盖新内容
+
+async function openModal(sid) {
+  modalOpenSid = sid;
+  modalOverlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';        // 滚动锁
+  modalOverlay.querySelector('.modal').scrollTop = 0;
+  modalBody.innerHTML = '<div class="modal-empty">加载中…</div>';
+  if (modalCache.has(sid)) { renderModal(modalCache.get(sid)); return; }
+  try {
+    const res = await fetch('/api/subject/' + sid);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    modalCache.set(sid, data);
+    if (modalCache.size > 300) modalCache.delete(modalCache.keys().next().value);  // FIFO 防长期膨胀
+    if (modalOpenSid === sid) renderModal(data);   // 已被新请求替换则丢弃
+  } catch (e) {
+    if (modalOpenSid === sid)
+      modalBody.innerHTML = '<div class="modal-empty">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderModal(d) {
+  const sim = (d.similar || []).map(s => `
+    <div class="similar-item" data-sid="${s.subject_id}" title="查看详情">
+      <img class="sc" src="/img/${s.subject_id}" loading="lazy" alt="" onerror="this.remove()">
+      <div><div class="sc-name">${escapeHtml(s.name || '')}</div>
+      ${s.rating ? '<div class="sc-rate">⭐ ' + s.rating.toFixed(1) + '</div>' : ''}</div>
+    </div>`).join('');
+  modalBody.innerHTML = `
+    <div class="modal-head">
+      <img class="modal-cover" src="/img/${d.subject_id}" loading="lazy" alt="" onerror="this.remove()">
+      <div><div class="modal-title">${escapeHtml(d.name || '')}</div>
+      ${d.rating ? '<div class="modal-rating">⭐ ' + d.rating.toFixed(1) + '</div>' : ''}
+      ${d.date ? '<div class="modal-date">' + escapeHtml(d.date) + '</div>' : ''}
+      ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}</div>
+    </div>
+    <div class="modal-section">简介</div>
+    <div class="modal-summary"></div>
+    <div class="modal-section">相似动画</div>
+    <div class="similar-grid">${sim || '<div class="modal-empty">暂无相似</div>'}</div>`;
+  // 简介用 textContent + CSS pre-line 注入（从根上防 XSS，不 innerHTML）
+  modalBody.querySelector('.modal-summary').textContent = cleanSummary(d.summary || '');
+}
+
+function closeModal() {
+  modalOverlay.classList.add('hidden');
+  document.body.style.overflow = '';   // 解锁滚动
+  modalOpenSid = null;
+}
+
+// summary 纯文本清洗：把 HTML 块级/换行标签转成 \n，剥掉残留标签与实体（BGM 简介基本是纯文本，防御性处理）
+function cleanSummary(raw) {
+  return String(raw || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/gi, "'").replace(/&#x0*27;/gi, "'");
+}
+
+// 关闭三途径：✕ 按钮 / 点遮罩 / Esc
+modalOverlay.querySelector('.modal-close').addEventListener('click', closeModal);
+modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) closeModal(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !modalOverlay.classList.contains('hidden')) closeModal();
+});
+// 相似项点击 → 切换浮窗内容（缓存命中则瞬时）
+modalBody.addEventListener('click', e => {
+  const it = e.target.closest('.similar-item');
+  if (it) openModal(Number(it.dataset.sid));
+});
 </script>
 </body>
 </html>
