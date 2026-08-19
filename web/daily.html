@@ -87,32 +87,54 @@
 
   .card {
     display: flex; align-items: center; gap: 14px;
-    background: var(--card); border: 1px solid rgba(255,255,255,.65);
-    border-radius: 16px; padding: 11px 16px; margin-bottom: 10px;
-    box-shadow: 0 4px 16px rgba(242,109,157,.08);
+    background: var(--card);
+    border: 1px solid rgba(255,255,255,.65);
+    border-radius: 20px; padding: 14px 18px; margin-bottom: 10px;
+    cursor: pointer;  /* 点击卡片开详情浮窗 */
+    box-shadow: 0 6px 22px rgba(242,109,157,.10), 0 2px 8px rgba(242,109,157,.06);
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    transition: transform .18s, box-shadow .18s, opacity .18s;
+    transition: transform .18s ease, box-shadow .18s ease, opacity .18s;
   }
-  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(242,109,157,.16); }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(242,109,157,.18); }
   .card.hidden-card { opacity: .45; filter: grayscale(.3); }
 .card--checked { border-color: var(--accent); background: rgba(255,179,209,.22); }
-  .cover { width: 44px; height: 60px; object-fit: cover; border-radius: 8px;
-    background: #ffe9f2; flex-shrink: 0; box-shadow: 0 2px 8px rgba(242,109,157,.18); }
-  .info { flex: 1; min-width: 0; }
-  .name-cn { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cover {
+    width: 56px; height: 76px; object-fit: cover; border-radius: 10px;
+    background: #ffe9f2; flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(242,109,157,.18);
+    transition: transform .25s ease, box-shadow .25s ease;
+  }
+  .card:hover .cover { transform: scale(1.07); box-shadow: 0 4px 14px rgba(242,109,157,.28); }
+  .card .info { flex: 1; min-width: 0; }
+  .card .name { font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
   .name-ja { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
-  .meta-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-  .rating { font-size: 13px; font-weight: 700; color: #f5a623; background: rgba(245,166,35,.08);
-    padding: 1px 6px; border-radius: 99px; }
-  .actions { display: flex; gap: 6px; flex-shrink: 0; }
-  .act-btn { width: 30px; height: 30px; padding: 0; border-radius: 50%; display: inline-flex;
-    align-items: center; justify-content: center; font-size: 14px; cursor: pointer;
-    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.6); box-shadow: none; }
-  .act-btn:hover:not(:disabled) { transform: none; border-color: rgba(242,109,157,.5); }
-  .act-search { color: rgba(35,155,230,.75); }
-  .act-search:hover:not(:disabled) { background: rgba(35,155,230,.12); }
-  .act-hide { color: var(--sub); }
-  .act-hide:hover:not(:disabled) { background: rgba(255,179,209,.25); color: var(--accent); }
+  .card .tags { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+  .card .rate { font-size: 12px; font-weight: 700; color: #e8a33d; letter-spacing: .3px; }
+  .card .rate::before { content: "⭐"; font-size: 11px; margin-right: 2px; }
+  /* 条目右侧外链：Bangumi 条目页 / Bilibili 搜索 */
+  .card .links { display: flex; gap: 6px; margin-left: auto; flex-shrink: 0; }
+  .card .link {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 30px; padding: 0 8px; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.6);
+    font-size: 12px; font-weight: 600; text-decoration: none;
+    opacity: .8; transition: opacity .15s, transform .15s, background .15s;
+  }
+  .card .link-ico { width: 18px; height: 18px; border-radius: 4px; display: block; }
+  .card .link-txt { display: none; }
+  .card .link.no-ico .link-txt { display: inline; }
+  .card .link:hover { opacity: 1; transform: translateY(-1px); }
+  .card .link-bgm { color: #7c8cf8; border-color: rgba(124,140,248,.32); }
+  .card .link-bgm:hover { background: rgba(124,140,248,.12); }
+  .card .link-bili { color: #fb7299; border-color: rgba(251,114,153,.32); }
+  .card .link-bili:hover { background: rgba(251,114,153,.12); }
+  .card .hide {
+    flex-shrink: 0; width: 30px; height: 30px; padding: 0;
+    border-radius: 50%; border: 1px solid rgba(242,109,157,.22);
+    background: rgba(255,255,255,.6); color: var(--sub);
+    font-size: 14px; line-height: 1; cursor: pointer; opacity: .6; box-shadow: none;
+  }
+  .card .hide:hover { opacity: 1; color: var(--accent); border-color: rgba(242,109,157,.5); background: rgba(255,179,209,.25); }
 
   .day-sec { margin-bottom: 18px; }
   .day-head { display: flex; align-items: center; gap: 8px; padding: 8px 2px 6px; font-weight: 700; font-size: 17px; }
@@ -131,11 +153,81 @@
   .hidden { display: none; }
   .login-hint { font-size: 13px; color: var(--sub); margin-bottom: 12px; text-align: center; }
   .login-hint a { color: var(--accent); }
+  /* 卡片浮窗：点击卡片 → 简介 + 相似动画 + 10 星打分 */
+  .modal-overlay {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(74,63,78,.45); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  /* 必须双类：.modal-overlay 定义在 .hidden 之后，单类优先级 display:flex 会覆盖 display:none，
+     导致浮窗始终可见、关不掉。双类 (0,2,0) 压过单类 (0,1,0)。 */
+  .modal-overlay.hidden { display: none; }
+  .modal {
+    position: relative; z-index: 1001; width: min(560px, 100%); max-height: 82vh;
+    overflow-y: auto; background: #fff; border-radius: 22px;
+    box-shadow: 0 18px 50px rgba(74,63,78,.35); padding: 22px 20px 20px;
+  }
+  .modal-close {
+    position: absolute; top: 12px; right: 14px; width: 32px; height: 32px; padding: 0;
+    border-radius: 50%; border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.8);
+    color: var(--sub); font-size: 15px; line-height: 1; cursor: pointer; box-shadow: none;
+  }
+  .modal-close:hover { color: var(--accent); border-color: rgba(242,109,157,.5); }
+  .modal-head { display: flex; gap: 16px; }
+  .modal-cover {
+    width: 120px; height: 168px; object-fit: cover; border-radius: 12px;
+    background: #ffe9f2; flex-shrink: 0; box-shadow: 0 2px 10px rgba(242,109,157,.2);
+  }
+  .modal-title { font-size: 19px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+  .modal-rating { color: #e8a33d; font-weight: 700; font-size: 13px; margin-top: 4px; }
+  .modal-date, .modal-sub { color: var(--sub); font-size: 13px; margin-top: 3px; }
+  .modal-tag {
+    display: inline-block; font-size: 11px; padding: 2px 8px; margin: 4px 4px 0 0;
+    border-radius: 999px; background: rgba(242,109,157,.1); color: var(--accent);
+    border: 1px solid rgba(242,109,157,.22);
+  }
+  .modal-section { font-size: 13px; color: var(--sub); font-weight: 700; margin: 16px 0 8px; }
+  .modal-summary { font-size: 14px; line-height: 1.75; color: var(--text); white-space: pre-line; word-break: break-word; }
+  .similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .similar-item {
+    display: flex; gap: 8px; align-items: center; padding: 8px;
+    border: 1px solid rgba(242,109,157,.18); border-radius: 12px; cursor: pointer;
+    background: rgba(255,255,255,.7); transition: border-color .15s, background .15s;
+  }
+  .similar-item:hover { border-color: var(--accent-soft); background: rgba(255,255,255,.95); }
+  .similar-item .sc { width: 38px; height: 52px; object-fit: cover; border-radius: 6px; background: #ffe9f2; flex-shrink: 0; }
+  .similar-item .sc-name { font-size: 13px; overflow-wrap: anywhere; line-height: 1.3; }
+  .similar-item .sc-rate { font-size: 11px; color: #e8a33d; font-weight: 700; margin-top: 2px; }
+  .modal-empty { color: var(--sub); font-size: 13px; }
+  /* 浮窗内 10 星打分（对齐 /rate 页）：悬浮第 k 颗高亮 1..k + 数字气泡，点击即打 */
+  .modal-rate-hint { font-size: 13px; color: var(--sub); margin-top: 8px; }
+  .modal-rate-hint a { color: var(--accent); text-decoration: none; font-weight: 700; }
+  .modal-rate-hint a:hover { text-decoration: underline; }
+  .stars { display: flex; align-items: center; gap: 2px; margin-top: 10px; min-height: 20px; flex-wrap: wrap; }
+  .star { font-size: 17px; color: #e3c4d2; cursor: pointer; line-height: 1;
+    transition: transform .12s, color .12s, text-shadow .12s; user-select: none; }
+  .star:hover { transform: scale(1.25); }
+  .star.on { color: #f5a623; text-shadow: 0 0 6px rgba(245,166,35,.45); }
+  .star-num { min-width: 18px; font-size: 12px; font-weight: 700; color: var(--accent); margin-left: 4px; text-align: center; }
+  .rated-badge { font-size: 11px; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+    padding: 2px 9px; border-radius: 99px; margin-left: 6px; }
+  .clear-btn { font-size: 11px; font-weight: 600; padding: 2px 9px; margin-left: 6px;
+    border-radius: 99px; border: 1px solid rgba(242,109,157,.28);
+    background: rgba(255,255,255,.7); color: var(--sub); cursor: pointer; font-family: inherit; }
+  .clear-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255,179,209,.2); }
+  .stars.busy { opacity: .55; pointer-events: none; }
   @media (max-width: 480px) {
     .wrap { padding: 24px 14px 60px; }
     .brand-link { font-size: 22px; }
-    .card { padding: 9px 12px; }
-    .name-cn { font-size: 15px; }
+    .card { padding: 12px 14px; }
+    .cover { width: 48px; height: 66px; }
+    .card .link { padding: 0 6px; }
+    .star { font-size: 15px; }
+    .modal-overlay { padding: 10px; }
+    .modal { padding: 16px 14px; max-height: 86vh; }
+    .modal-cover { width: 88px; height: 124px; }
+    .similar-grid { grid-template-columns: repeat(2, 1fr); }
   }
 </style>
 </head>
@@ -171,6 +263,14 @@
   <div class="footer">数据来源 <a href="https://bgm.tv" target="_blank" rel="noopener">Bangumi</a></div>
 </div>
 
+<!-- 卡片详情浮窗（在 .wrap 外，内部点击不冒泡进内容区委托） -->
+<div id="modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal">
+    <button class="modal-close" aria-label="关闭">✕</button>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -196,6 +296,7 @@ let me = null;
 let tab = 'daily';         // 'daily' | 'season'
 let selectMode = false;
 let selectedIds = new Set();
+let rateMap = new Map();       // sid -> {state, rate}（当前登录用户打分 overlay，浮窗星形显示）
 
 // ---- 星期换算（Bangumi weekday.id: 1=周一..7=周日；JS getDay: 0=周日..6=周六）----
 function jsDayToBangumi(jsDay) { return jsDay === 0 ? 7 : jsDay; }
@@ -238,9 +339,12 @@ async function refreshAuth() {
       logoutBtn.classList.remove('hidden');
       await loadHidden();
       loadCollected();  // 不阻塞日历加载：完成后自行刷新登录UI/渲染
+      loadRateMap();    // 打分 overlay（不 await：失败降级空星，不阻塞登录态恢复）
     } else {
       me = null; hiddenIds = [];
       collectedIds = null; collectedOnly = false; collectedState = new Map();
+      rateMap = new Map();
+      if (modalOpenSid && modalCache.has(modalOpenSid)) renderModal(modalCache.get(modalOpenSid));  // 登出后浮窗星区回登录链接
       userLabel.classList.add('hidden');
       logoutBtn.classList.add('hidden');
       loginBtn.classList.remove('hidden');
@@ -394,45 +498,53 @@ function makeDaySection(title, weekdayId, items, dateStr, isToday) {
     '<div>' + items.map(a => makeCard(a, false)).join('') + '</div></div>';
 }
 
+// BGM 站点图标（与推荐页同一份，data: URI 内联）
+const BGM_ICO = 'data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALJu+f//////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAsm75ELJu+cCybvn/sm75/7Ju+f+ybvn//////7Ju+f+ybvn/sm75/7Ju+f+ybvn/sm75/7Ju+f+ybvnAsm75ELJu+cCybvn/sm75/7Ju+f+ybvn/sm75////////////sm75/7Ju+f+ybvn/sm75/7Ju+f+ybvn/sm75/7Ju+cCwaPn/sGj5/9iz/P///////////////////////////////////////////////////////////9iz/P+waPn/rF/6/6xf+v//////////////////////////////////////////////////////////////////////rF/6/6lW+/+pVvv/////////////////////////////////zXn2/////////////////////////////////6lW+/+lTfz/pU38///////Nefb/zXn2/8159v//////zXn2///////Nefb//////8159v/Nefb/zXn2//////+lTfz/okT8/6JE/P//////////////////////2bb8/8159v/Nefb/zXn2/9m2/P//////////////////////okT8/546/f+eOv3//////8159v/Nefb/zXn2////////////////////////////zXn2/8159v/Nefb//////546/f+bMf7/mzH+//////////////////////////////////////////////////////////////////////+bMf7/lyj+wJco/v/Mk/7////////////////////////////////////////////////////////////Mk///lyj+wJQf/xCUH//AlB///5Qf//+UH///lB///5Qf//+aP///mj///5o///+UH///lB///5Qf//+UH///lB//wJQf/xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/5o////Nefb/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAM159v8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADNefb/AAAAAAAAAAAAAAAA+f8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/j8AAP3fAAD77wAA9/cAAA==';
+
+// 封面回退链：/img/{id} 失败 → BGM 直连图（grid/small）→ 再失败移除 <img>
+function coverFallback(id, cover) {
+  const src = String(cover).replace(/['\\]/g, '');
+  return src
+    ? 'onerror="this.onerror=null;this.src=\'' + src + '\';this.onerror=function(){this.remove()}"'
+    : 'onerror="this.onerror=null;this.remove()"';
+}
+
 function makeCard(anime, isHidden) {
-  const cover = (anime.images && (anime.images.grid || anime.images.small)) || '';
+  const id = anime.id;
   const score = anime.rating && anime.rating.score ? anime.rating.score.toFixed(1) : '';
+  const cover = (anime.images && (anime.images.grid || anime.images.small)) || '';
   const cls = isHidden ? ' hidden-card' : '';
-  const hideIcon = isHidden ? '👁🗨' : '👁';
-  const hideTitle = isHidden ? '取消隐藏' : '隐藏';
-  return '<div class="card' + cls + '" data-id="' + anime.id + '" data-url="' + escapeHtml(anime.url) + '">' +
-    '<img class="cover" src="' + escapeHtml(cover) + '" loading="lazy" onerror="this.style.display=\'none\'">' +
+  const hideTitle = isHidden ? '恢复显示' : '隐藏';
+  return '<div class="card' + cls + '" data-sid="' + id + '" title="点击查看详情">' +
+    '<img class="cover" src="/img/' + id + '" loading="lazy" alt="" ' + coverFallback(id, cover) + '>' +
     '<div class="info">' +
-      '<div class="name-cn">' + escapeHtml(anime.nameCn) + '</div>' +
-      (anime.name !== anime.nameCn ? '<div class="name-ja">' + escapeHtml(anime.name) + '</div>' : '') +
-      '<div class="meta-row">' + stateTag(anime.id) + (score ? '<span class="rating">⭐ ' + score + '</span>' : '') + '</div>' +
+      '<div class="name">' + escapeHtml(anime.nameCn) + '</div>' +
+      (anime.name && anime.name !== anime.nameCn ? '<div class="name-ja">' + escapeHtml(anime.name) + '</div>' : '') +
+      '<div class="tags">' + stateTag(id) + (score ? '<span class="rate">' + score + '</span>' : '') + '</div>' +
     '</div>' +
-    '<div class="actions">' +
-      '<button class="act-btn act-search" data-action="search" title="B站搜索">🔍</button>' +
-      '<button class="act-btn act-hide" data-action="hide" title="' + hideTitle + '">' + hideIcon + '</button>' +
+    '<div class="links">' +
+      '<a class="link link-bgm" href="https://bgm.tv/subject/' + id + '" target="_blank" rel="noopener" title="在 Bangumi 打开条目">' +
+        '<img class="link-ico" src="' + BGM_ICO + '" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add(\'no-ico\')"><span class="link-txt">BGM</span></a>' +
+      '<a class="link link-bili" href="https://search.bilibili.com/all?keyword=' + encodeURIComponent(anime.nameCn || anime.name || '') + '" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画">' +
+        '<img class="link-ico" src="https://www.bilibili.com/favicon.ico" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add(\'no-ico\')"><span class="link-txt">B站</span></a>' +
     '</div>' +
+    '<button class="hide" data-action="hide" title="' + hideTitle + '">✕</button>' +
   '</div>';
 }
 
 function bindCardEvents(container) {
   container.querySelectorAll('.card').forEach(card => {
-    const id = parseInt(card.dataset.id);
-    const url = card.dataset.url;
+    const id = parseInt(card.dataset.sid);
     card.onclick = (e) => {
-      if (e.target.closest('[data-action]')) return;
+      if (e.target.closest('[data-action]')) return;   // ✕ 隐藏按钮
+      if (e.target.closest('a.link')) return;          // BGM/B站 外链照常新标签打开
       if (selectMode) {
         selectedIds.has(id) ? selectedIds.delete(id) : selectedIds.add(id);
         card.classList.toggle('card--checked', selectedIds.has(id));
         updateSeasonBar();
-      } else if (url) {
-        window.open(url, '_blank');
+      } else {
+        openModal(id);   // 点卡片 → 简介浮窗
       }
-    };
-    const searchBtn = card.querySelector('[data-action="search"]');
-    if (searchBtn) searchBtn.onclick = (e) => {
-      e.stopPropagation();
-      const name = card.querySelector('.name-cn').textContent;
-      window.open('https://search.bilibili.com/all?keyword=' + encodeURIComponent(name), '_blank');
     };
     const hideBtn = card.querySelector('[data-action="hide"]');
     if (hideBtn) hideBtn.onclick = (e) => {
@@ -483,11 +595,11 @@ function bindSeasonEvents(container) {
   click('enter', () => { selectMode = true; selectedIds.clear(); render(); });
   click('exit', () => { selectMode = false; selectedIds.clear(); render(); });
   click('visible', () => {
-    container.querySelectorAll('.card:not(.hidden-card)').forEach(c => selectedIds.add(parseInt(c.dataset.id)));
+    container.querySelectorAll('.card:not(.hidden-card)').forEach(c => selectedIds.add(parseInt(c.dataset.sid)));
     render();
   });
   click('hidden', () => {
-    container.querySelectorAll('.card.hidden-card').forEach(c => selectedIds.add(parseInt(c.dataset.id)));
+    container.querySelectorAll('.card.hidden-card').forEach(c => selectedIds.add(parseInt(c.dataset.sid)));
     render();
   });
   click('hide', () => bulkHide());
@@ -572,6 +684,217 @@ refreshAuth().then(() => loadData());
     el.appendChild(p);
   }
 })();
+
+/* ---- 卡片详情浮窗：简介 + 相似动画 + 10 星打分 ---- */
+const modalOverlay = document.getElementById('modal');
+const modalBody = document.getElementById('modal-body');
+const modalCache = new Map();   // sid -> /api/subject/{id} 响应（同一条目只拉一次）
+let modalOpenSid = null;        // 竞态守卫：连续快点点两张卡，旧请求晚到不覆盖新内容
+
+async function openModal(sid) {
+  modalOpenSid = sid;
+  modalOverlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';        // 滚动锁
+  modalOverlay.querySelector('.modal').scrollTop = 0;
+  modalBody.innerHTML = '<div class="modal-empty">加载中…</div>';
+  if (modalCache.has(sid)) { renderModal(modalCache.get(sid)); return; }
+  try {
+    const res = await fetch('/api/subject/' + sid);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    modalCache.set(sid, data);
+    if (modalCache.size > 300) modalCache.delete(modalCache.keys().next().value);  // FIFO 防长期膨胀
+    if (modalOpenSid === sid) renderModal(data);   // 已被新请求替换则丢弃
+  } catch (e) {
+    if (modalOpenSid === sid)
+      modalBody.innerHTML = '<div class="modal-empty">加载失败：' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderModal(d) {
+  const sim = (d.similar || []).map(s => `
+    <div class="similar-item" data-sid="${s.subject_id}" title="查看详情">
+      <img class="sc" src="/img/${s.subject_id}" loading="lazy" alt="" onerror="this.remove()">
+      <div><div class="sc-name">${escapeHtml(s.name || '')}</div>
+      ${s.rating ? '<div class="sc-rate">⭐ ' + s.rating.toFixed(1) + '</div>' : ''}</div>
+    </div>`).join('');
+  modalBody.innerHTML = `
+    <div class="modal-head">
+      <img class="modal-cover" src="/img/${d.subject_id}" loading="lazy" alt="" onerror="this.remove()">
+      <div><div class="modal-title">${escapeHtml(d.name || '')}</div>
+      ${d.rating ? '<div class="modal-rating">⭐ ' + d.rating.toFixed(1) + '</div>' : ''}
+      ${d.date ? '<div class="modal-date">' + escapeHtml(d.date) + '</div>' : ''}
+      ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}</div>
+    </div>
+    ${modalStarsHtml(d.subject_id)}
+    <div class="modal-section">简介</div>
+    <div class="modal-summary"></div>
+    <div class="modal-section">相似动画</div>
+    <div class="similar-grid">${sim || '<div class="modal-empty">暂无相似</div>'}</div>`;
+  // 简介用 textContent + CSS pre-line 注入（从根上防 XSS，不 innerHTML）
+  modalBody.querySelector('.modal-summary').textContent = cleanSummary(d.summary || '');
+  decorateModalStars(modalBody.querySelector('.stars'), d.subject_id);
+}
+
+function closeModal() {
+  modalOverlay.classList.add('hidden');
+  document.body.style.overflow = '';   // 解锁滚动
+  modalOpenSid = null;
+}
+
+// summary 纯文本清洗（同 index.html）：块级/换行标签转 \n，剥掉残留标签与实体
+function cleanSummary(raw) {
+  return String(raw || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/gi, "'").replace(/&#x0*27;/gi, "'");
+}
+
+// 关闭三途径：✕ 按钮 / 点遮罩 / Esc
+modalOverlay.querySelector('.modal-close').addEventListener('click', closeModal);
+modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) closeModal(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !modalOverlay.classList.contains('hidden')) closeModal();
+});
+
+// ---- 浮窗内 10 星打分（对齐 /rate 页语义；写用户真实 BGM 账号）----
+function fillStars(row, v) {
+  if (!row) return;
+  row.querySelectorAll('.star').forEach(s => {
+    s.classList.toggle('on', Number(s.dataset.v) <= v);
+  });
+}
+function setNum(row, text) {
+  if (!row) return;
+  const n = row.querySelector('.star-num');
+  if (n) n.textContent = text;
+}
+
+// 星形行 HTML：未登录 → 登录链接（浮窗仍可看简介）；登录 → 10 星 + 数字 + 徽标 + 清除
+function modalStarsHtml(sid) {
+  if (!loggedIn) {
+    return '<div class="modal-rate-hint">🔒 <a href="/auth/login">登录后可打分</a></div>';
+  }
+  let h = '<div class="stars" data-sid="' + sid + '">';
+  for (let i = 1; i <= 10; i++) h += '<span class="star" data-v="' + i + '" title="' + i + ' 分">★</span>';
+  h += '<span class="star-num"></span>' +
+       '<span class="rated-badge hidden"></span>' +
+       '<button class="clear-btn hidden" title="清除评分（保留看过状态）">✕ 清除评分</button>' +
+       '</div>';
+  return h;
+}
+
+// 用 rateMap 装饰浮窗星行（星形填满 + 徽标 + 清除按钮）
+function decorateModalStars(row, sid) {
+  if (!row) return;
+  const cur = rateMap.get(sid);
+  const v = cur ? cur.rate : 0;
+  fillStars(row, v);
+  setNum(row, '');
+  const badge = row.querySelector('.rated-badge');
+  const clearBtn = row.querySelector('.clear-btn');
+  if (cur && cur.rate > 0) {
+    badge.textContent = '看过 ' + cur.rate + '分';
+    badge.classList.remove('hidden');
+    clearBtn.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+    clearBtn.classList.add('hidden');
+  }
+}
+
+function setModalBusy(sid, busy) {
+  const row = modalBody.querySelector('.stars[data-sid="' + sid + '"]');
+  if (row) row.classList.toggle('busy', busy);
+}
+
+// 拉取当前用户打分 overlay（一次，建 rateMap；浮窗已开则补星）
+async function loadRateMap() {
+  try {
+    const r = await fetch('/api/rate/collections');
+    if (r.status === 401 || !r.ok) return;
+    const d = await r.json();
+    rateMap = new Map();
+    (d.items || []).forEach(it => rateMap.set(it.subject_id, {state: it.state, rate: it.rate}));
+    if (modalOpenSid) {
+      const row = modalBody.querySelector('.stars');
+      if (row) decorateModalStars(row, modalOpenSid);
+    }
+  } catch (e) { /* overlay 失败降级空星，不影响页面 */ }
+}
+
+async function rate(sid, value) {
+  setModalBusy(sid, true);
+  try {
+    const r = await fetch('/api/rate/' + sid, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rate: value}),
+    });
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('评分失败（' + r.status + '），请重试'); return; }
+    rateMap.set(sid, {state: '看过', rate: value});
+    decorateModalStars(modalBody.querySelector('.stars'), sid);
+  } catch (e) { alert('网络错误，请重试'); }
+  finally { setModalBusy(sid, false); }
+}
+
+async function clearRate(sid) {
+  setModalBusy(sid, true);
+  try {
+    const r = await fetch('/api/rate/' + sid, {method: 'DELETE'});
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('清除失败（' + r.status + '），请重试'); return; }
+    // BGM 无删除收藏接口：清除 = 评分归零、保留"看过"状态（对齐站内"删除评分"）
+    const cur = rateMap.get(sid);
+    rateMap.set(sid, {state: (cur && cur.state) || '看过', rate: 0});
+    decorateModalStars(modalBody.querySelector('.stars'), sid);
+  } catch (e) { alert('网络错误，请重试'); }
+  finally { setModalBusy(sid, false); }
+}
+
+// 星形悬浮预览（不落库，mouseout 恢复 rateMap 值）
+modalBody.addEventListener('mouseover', (e) => {
+  const star = e.target.closest('.star');
+  if (!star) return;
+  const row = star.closest('.stars');
+  fillStars(row, Number(star.dataset.v));
+  setNum(row, star.dataset.v);
+});
+modalBody.addEventListener('mouseout', (e) => {
+  const row = e.target.closest('.stars');
+  if (!row) return;
+  if (e.relatedTarget && row.contains(e.relatedTarget)) return;  // 仍在行内移动
+  const sid = Number(row.dataset.sid);
+  const cur = rateMap.get(sid);
+  fillStars(row, cur ? cur.rate : 0);
+  setNum(row, '');
+});
+// 点击：清除按钮 / 星（点当前分再点=清除）/ 相似项跳转
+modalBody.addEventListener('click', e => {
+  const clearBtn = e.target.closest('.clear-btn');
+  if (clearBtn) { e.stopPropagation(); clearRate(Number(clearBtn.closest('.stars').dataset.sid)); return; }
+  const star = e.target.closest('.star');
+  if (star) {
+    e.stopPropagation();
+    const sid = Number(star.closest('.stars').dataset.sid);
+    const v = Number(star.dataset.v);
+    const cur = rateMap.get(sid);
+    if (cur && cur.rate === v) { clearRate(sid); return; }  // 点击当前分再点 → 清除
+    rate(sid, v);
+    return;
+  }
+  const it = e.target.closest('.similar-item');
+  if (it) openModal(Number(it.dataset.sid));
+});
 </script>
 </body>
 </html>

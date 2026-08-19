@@ -203,6 +203,24 @@
   .similar-item .sc-name { font-size: 13px; overflow-wrap: anywhere; line-height: 1.3; }
   .similar-item .sc-rate { font-size: 11px; color: #e8a33d; font-weight: 700; margin-top: 2px; }
   .modal-empty { color: var(--sub); font-size: 13px; }
+  /* 浮窗内 10 星打分（对齐 /rate 页）：悬浮第 k 颗高亮 1..k + 数字气泡，点击即打 */
+  .modal-rate-hint { font-size: 13px; color: var(--sub); margin-top: 8px; }
+  .modal-rate-hint a { color: var(--accent); text-decoration: none; font-weight: 700; }
+  .modal-rate-hint a:hover { text-decoration: underline; }
+  .stars { display: flex; align-items: center; gap: 2px; margin-top: 10px; min-height: 20px; flex-wrap: wrap; }
+  .star { font-size: 17px; color: #e3c4d2; cursor: pointer; line-height: 1;
+    transition: transform .12s, color .12s, text-shadow .12s; user-select: none; }
+  .star:hover { transform: scale(1.25); }
+  .star.on { color: #f5a623; text-shadow: 0 0 6px rgba(245,166,35,.45); }
+  .star-num { min-width: 18px; font-size: 12px; font-weight: 700; color: var(--accent); margin-left: 4px; text-align: center; }
+  .rated-badge { font-size: 11px; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+    padding: 2px 9px; border-radius: 99px; margin-left: 6px; }
+  .clear-btn { font-size: 11px; font-weight: 600; padding: 2px 9px; margin-left: 6px;
+    border-radius: 99px; border: 1px solid rgba(242,109,157,.28);
+    background: rgba(255,255,255,.7); color: var(--sub); cursor: pointer; font-family: inherit; }
+  .clear-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255,179,209,.2); }
+  .stars.busy { opacity: .55; pointer-events: none; }
   /* 小屏适配 */
   @media (max-width: 480px) {
     .wrap { padding: 28px 14px 60px; }
@@ -214,6 +232,7 @@
     .modal { padding: 16px 14px; max-height: 86vh; }
     .modal-cover { width: 88px; height: 124px; }
     .similar-grid { grid-template-columns: repeat(2, 1fr); }
+    .star { font-size: 15px; }
   }
 </style>
 </head>
@@ -281,6 +300,7 @@ let shownBefore = new Set(); // 上次展示过的 sid（sessionStorage 持久�
 let hidden = new Map();      // sid -> name（登录后从服务端加载的"不感兴趣"）
 let loggedIn = false;        // 是否已登录（隐藏功能的前提）
 let me = null;               // 登录用户的 Bangumi 用户名
+let rateMap = new Map();       // sid -> {state, rate}（当前登录用户打分 overlay，浮窗星形显示）
 
 // ---- 登录态 ----
 async function refreshAuth() {
@@ -295,9 +315,12 @@ async function refreshAuth() {
       logoutBtn.classList.remove('hidden');
       userLabel.classList.remove('hidden');
       await loadHiddenServer();
+      loadRateMap();   // 打分 overlay（不 await：失败降级空星，不阻塞登录态恢复）
     } else {
       me = null;
       hidden.clear();
+      rateMap = new Map();
+      if (modalOpenSid && modalCache.has(modalOpenSid)) renderModal(modalCache.get(modalOpenSid));  // 登出后浮窗星区回登录链接
       userLabel.classList.add('hidden');
       logoutBtn.classList.add('hidden');
       loginBtn.classList.remove('hidden');
@@ -757,6 +780,102 @@ const modalBody = document.getElementById('modal-body');
 const modalCache = new Map();   // sid -> /api/subject/{id} 响应（同一条目只拉一次）
 let modalOpenSid = null;        // 竞态守卫：连续快点点两张卡，旧请求晚到不覆盖新内容
 
+// ---- 浮窗内 10 星打分（对齐 /rate 页语义；写用户真实 BGM 账号）----
+function fillStars(row, v) {
+  if (!row) return;
+  row.querySelectorAll('.star').forEach(s => {
+    s.classList.toggle('on', Number(s.dataset.v) <= v);
+  });
+}
+function setNum(row, text) {
+  if (!row) return;
+  const n = row.querySelector('.star-num');
+  if (n) n.textContent = text;
+}
+
+// 星形行 HTML：未登录 → 登录链接（浮窗仍可看简介）；登录 → 10 星 + 数字 + 徽标 + 清除
+function modalStarsHtml(sid) {
+  if (!loggedIn) {
+    return '<div class="modal-rate-hint">🔒 <a href="/auth/login">登录后可打分</a></div>';
+  }
+  let h = '<div class="stars" data-sid="' + sid + '">';
+  for (let i = 1; i <= 10; i++) h += '<span class="star" data-v="' + i + '" title="' + i + ' 分">★</span>';
+  h += '<span class="star-num"></span>' +
+       '<span class="rated-badge hidden"></span>' +
+       '<button class="clear-btn hidden" title="清除评分（保留看过状态）">✕ 清除评分</button>' +
+       '</div>';
+  return h;
+}
+
+// 用 rateMap 装饰浮窗星行（星形填满 + 徽标 + 清除按钮）
+function decorateModalStars(row, sid) {
+  if (!row) return;
+  const cur = rateMap.get(sid);
+  const v = cur ? cur.rate : 0;
+  fillStars(row, v);
+  setNum(row, '');
+  const badge = row.querySelector('.rated-badge');
+  const clearBtn = row.querySelector('.clear-btn');
+  if (cur && cur.rate > 0) {
+    badge.textContent = '看过 ' + cur.rate + '分';
+    badge.classList.remove('hidden');
+    clearBtn.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+    clearBtn.classList.add('hidden');
+  }
+}
+
+function setModalBusy(sid, busy) {
+  const row = modalBody.querySelector('.stars[data-sid="' + sid + '"]');
+  if (row) row.classList.toggle('busy', busy);
+}
+
+// 拉取当前用户打分 overlay（一次，建 rateMap；浮窗已开则补星）
+async function loadRateMap() {
+  try {
+    const r = await fetch('/api/rate/collections');
+    if (r.status === 401 || !r.ok) return;
+    const d = await r.json();
+    rateMap = new Map();
+    (d.items || []).forEach(it => rateMap.set(it.subject_id, {state: it.state, rate: it.rate}));
+    if (modalOpenSid) {
+      const row = modalBody.querySelector('.stars');
+      if (row) decorateModalStars(row, modalOpenSid);
+    }
+  } catch (e) { /* overlay 失败降级空星，不影响页面 */ }
+}
+
+async function rate(sid, value) {
+  setModalBusy(sid, true);
+  try {
+    const r = await fetch('/api/rate/' + sid, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rate: value}),
+    });
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('评分失败（' + r.status + '），请重试'); return; }
+    rateMap.set(sid, {state: '看过', rate: value});
+    decorateModalStars(modalBody.querySelector('.stars'), sid);
+  } catch (e) { alert('网络错误，请重试'); }
+  finally { setModalBusy(sid, false); }
+}
+
+async function clearRate(sid) {
+  setModalBusy(sid, true);
+  try {
+    const r = await fetch('/api/rate/' + sid, {method: 'DELETE'});
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('清除失败（' + r.status + '），请重试'); return; }
+    // BGM 无删除收藏接口：清除 = 评分归零、保留"看过"状态（对齐站内"删除评分"）
+    const cur = rateMap.get(sid);
+    rateMap.set(sid, {state: (cur && cur.state) || '看过', rate: 0});
+    decorateModalStars(modalBody.querySelector('.stars'), sid);
+  } catch (e) { alert('网络错误，请重试'); }
+  finally { setModalBusy(sid, false); }
+}
+
 async function openModal(sid) {
   modalOpenSid = sid;
   modalOverlay.classList.remove('hidden');
@@ -795,12 +914,14 @@ function renderModal(d) {
       ${d.date ? '<div class="modal-date">' + escapeHtml(d.date) + '</div>' : ''}
       ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}</div>
     </div>
+    ${modalStarsHtml(d.subject_id)}
     <div class="modal-section">简介</div>
     <div class="modal-summary"></div>
     <div class="modal-section">相似动画</div>
     <div class="similar-grid">${sim || '<div class="modal-empty">暂无相似</div>'}</div>`;
   // 简介用 textContent + CSS pre-line 注入（从根上防 XSS，不 innerHTML）
   modalBody.querySelector('.modal-summary').textContent = cleanSummary(d.summary || '');
+  decorateModalStars(modalBody.querySelector('.stars'), d.subject_id);
 }
 
 function closeModal() {
@@ -828,8 +949,37 @@ modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) clo
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !modalOverlay.classList.contains('hidden')) closeModal();
 });
-// 相似项点击 → 切换浮窗内容（缓存命中则瞬时）
+// 星形悬浮预览（不落库，mouseout 恢复 rateMap 值）
+modalBody.addEventListener('mouseover', (e) => {
+  const star = e.target.closest('.star');
+  if (!star) return;
+  const row = star.closest('.stars');
+  fillStars(row, Number(star.dataset.v));
+  setNum(row, star.dataset.v);
+});
+modalBody.addEventListener('mouseout', (e) => {
+  const row = e.target.closest('.stars');
+  if (!row) return;
+  if (e.relatedTarget && row.contains(e.relatedTarget)) return;  // 仍在行内移动
+  const sid = Number(row.dataset.sid);
+  const cur = rateMap.get(sid);
+  fillStars(row, cur ? cur.rate : 0);
+  setNum(row, '');
+});
+// 点击：清除按钮 / 星（点当前分再点=清除）/ 相似项跳转
 modalBody.addEventListener('click', e => {
+  const clearBtn = e.target.closest('.clear-btn');
+  if (clearBtn) { e.stopPropagation(); clearRate(Number(clearBtn.closest('.stars').dataset.sid)); return; }
+  const star = e.target.closest('.star');
+  if (star) {
+    e.stopPropagation();
+    const sid = Number(star.closest('.stars').dataset.sid);
+    const v = Number(star.dataset.v);
+    const cur = rateMap.get(sid);
+    if (cur && cur.rate === v) { clearRate(sid); return; }  // 点击当前分再点 → 清除
+    rate(sid, v);
+    return;
+  }
   const it = e.target.closest('.similar-item');
   if (it) openModal(Number(it.dataset.sid));
 });
