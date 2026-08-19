@@ -174,30 +174,37 @@ class BangumiAPI:
         token: str,
         deadline: float | None = None,
     ) -> dict[str, Any]:
-        """写收藏：标记状态 + 评分（PATCH /v0/users/-/collections/{id}）。
+        """写收藏：标记状态 + 评分（POST /v0/users/-/collections/{id}，upsert）。
 
         必须传用户的 OAuth access_token（token 属主 = 收藏写入对象）。
+        POST 是 upsert（create-or-update）：条目未收藏则创建、已收藏则修改。
+        不能再用 PATCH——PATCH 只改已收藏，条目未收藏返回 404 "subject not collected"，
+        真实线上事故（对未收藏新番打分 404）。成功返回 202 空体 → _request 容错转 {}。
         401 会落到 _request 的 raise_for_status → 调用方转 401 提示重新登录。
         """
         return self._request(
-            "PATCH", f"/v0/users/-/collections/{subject_id}",
+            "POST", f"/v0/users/-/collections/{subject_id}",
             json_body={"type": type, "rate": rate},
             token=token, deadline=deadline,
         )
 
-    def delete_collection(
+    def clear_rating(
         self,
         subject_id: int,
         *,
         token: str,
         deadline: float | None = None,
     ) -> dict[str, Any]:
-        """删除收藏（DELETE /v0/users/-/collections/{id}）。
+        """清除评分（BGM v0 无删除收藏接口：POST upsert 设 rate=0，保留收藏状态）。
 
-        BGM 对不存在/已删条目返回 404 幂等（调用方视为成功）；204/空体容错转 {}。
+        v0 对收藏只有 PATCH（只改已收藏）与 POST（upsert）两条路由，没有 DELETE；
+        type 值域 1..5，置 0 被显式拒绝（"can't set collection type to SubjectCollectionAll"）。
+        因此"取消打分"唯一可达语义 = rate 置 0、保留收藏状态（对齐 BGM 站内"删除评分"）。
+        只发 {rate:0} 不碰 type → 保留用户原有收藏状态。条目不存在返回 404（幂等，调用方视为成功）。
         """
         return self._request(
-            "DELETE", f"/v0/users/-/collections/{subject_id}",
+            "POST", f"/v0/users/-/collections/{subject_id}",
+            json_body={"rate": 0},
             token=token, deadline=deadline,
         )
 

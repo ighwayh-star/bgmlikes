@@ -253,7 +253,7 @@ function cardHTML(it) {
   for (let i = 1; i <= 10; i++) h += '<span class="star" data-v="' + i + '">★</span>';
   h += '<span class="star-num"></span>' +
        '<span class="rated-badge hidden"></span>' +
-       '<button class="clear-btn hidden" title="清除收藏与评分">✕ 清除</button>' +
+       '<button class="clear-btn hidden" title="清除评分（保留看过状态）">✕ 清除评分</button>' +
     '</div>' +
   '</div></div>';
   return h;
@@ -400,7 +400,9 @@ async function clearRate(sid) {
     const r = await fetch('/api/rate/' + sid, {method: 'DELETE'});
     if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
     if (!r.ok) { alert('清除失败（' + r.status + '），请重试'); return; }
-    rateMap.delete(sid);
+    // BGM 无删除收藏接口：清除 = 评分归零、保留"看过"状态（对齐站内"删除评分"）
+    const cur = rateMap.get(sid);
+    rateMap.set(sid, {state: (cur && cur.state) || '看过', rate: 0});
     decorateCard(content.querySelector('.card[data-id="' + sid + '"]'), sid);
   } catch (e) { alert('网络错误，请重试'); }
   finally { setBusy(sid, false); }

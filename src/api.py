@@ -202,11 +202,6 @@ def create_app() -> FastAPI:
         if cached and time.time() - cached[0] < _COLLECTED_TTL:
             cached[1][subject_id] = {"state": state, "rate": rate}
 
-    def _cache_drop(sess: Session, subject_id: int) -> None:
-        cached = _COLLECTED_CACHE.get(sess.user_id)
-        if cached and time.time() - cached[0] < _COLLECTED_TTL:
-            cached[1].pop(subject_id, None)
-
     app = FastAPI(title="bgmlikes", version="0.1")
 
     # CORS：只对 dailyanimation widget 的运行源 https://bgm.tv 放行（跨站复用站点登录同步
@@ -481,7 +476,7 @@ def create_app() -> FastAPI:
 
     @app.delete("/api/rate/{subject_id}")
     def rate_delete(request: Request, subject_id: int) -> dict:
-        """清除收藏/评分（BGM DELETE，幂等：404 视为已清除）。"""
+        """清除评分（BGM v0 无删除收藏接口 → rate 置 0、保留收藏状态）。幂等。"""
         sess = _session_from_request(request, auth)
         if sess is None:
             raise HTTPException(status_code=401, detail="请先登录")
@@ -489,19 +484,19 @@ def create_app() -> FastAPI:
         if not token:
             raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
         try:
-            api.delete_collection(subject_id, token=token, deadline=time.monotonic() + 8)
+            api.clear_rating(subject_id, token=token, deadline=time.monotonic() + 8)
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
                 raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
-            if e.response.status_code != 404:  # 404 = 本就没收藏，幂等成功
-                logger.exception("清除收藏失败（HTTP %s）：subject %s",
+            if e.response.status_code != 404:  # 404 = 条目不存在，幂等视为成功
+                logger.exception("清除评分失败（HTTP %s）：subject %s",
                                  e.response.status_code, subject_id)
                 raise HTTPException(status_code=502,
                                     detail=f"Bangumi API 错误：{e.response.status_code}")
         except RuntimeError as e:
-            logger.exception("清除收藏失败：subject %s", subject_id)
+            logger.exception("清除评分失败：subject %s", subject_id)
             raise HTTPException(status_code=502, detail=f"清除失败：{e}")
-        _cache_drop(sess, subject_id)
+        _cache_set_state(sess, subject_id, "看过", 0)  # 保留收藏、评分归零（与 BGM 一致）
         return {"ok": True, "subject_id": subject_id}
 
     @app.post("/v1/recommend", response_model=RecommendResponse)
