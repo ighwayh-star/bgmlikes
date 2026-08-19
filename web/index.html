@@ -103,14 +103,6 @@
     transition: transform .25s ease;
   }
   .card:hover .cover { transform: scale(1.06); }
-  .card .rank {
-    position: absolute; top: 10px; left: 10px; z-index: 1;
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 30px; height: 30px; padding: 0 7px; border-radius: 999px;
-    background: linear-gradient(135deg, var(--accent-soft), var(--accent));
-    color: #fff; font-size: 13px; font-weight: 700;
-    box-shadow: 0 2px 6px rgba(242,109,157,.35);
-  }
   .card .info { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
   .card .name {
     font-size: 16px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.35;
@@ -285,6 +277,7 @@
 
   <div class="meta-row">
     <div id="meta" class="meta"></div>
+    <button id="refresh" class="sec shuffle-btn hidden" title="从推荐池重新随机挑一组">🔄 刷新</button>
   </div>
   <div id="err" class="err hidden"></div>
   <div id="list"></div>
@@ -311,8 +304,10 @@ const meta = document.getElementById('meta');
 const err = document.getElementById('err');
 const list = document.getElementById('list');
 const restore = document.getElementById('restore');
+const refreshBtn = document.getElementById('refresh');
 let lastData = null;
 let shownCount = 15;         // 当前已渲染条数（无限滚动：从 50 条推荐池渐进加载，初始 5 行×3）
+let poolOrder = null;        // "刷新"后随机重排的池顺序；null=按排名展示
 let hidden = new Map();      // sid -> name（登录后从服务端加载的"不感兴趣"）
 let loggedIn = false;        // 是否已登录（隐藏功能的前提）
 let me = null;               // 登录用户的 Bangumi 用户名
@@ -372,6 +367,7 @@ async function recommend() {
   const sameUser = !!(lastData && lastData.username === username);
   if (!sameUser) {
     shownCount = 15;   // 新用户：从头渐进加载；同用户刷新保持当前滚动进度
+    poolOrder = null;  // 新用户：回到按排名展示（"刷新"重排不跨用户延续）
     list.innerHTML = '';
     restore.classList.add('hidden');
     restore.innerHTML = '';
@@ -395,6 +391,7 @@ async function recommend() {
     // 已登录：重新从服务端拉"不感兴趣"（比上次推荐时的可能新增），并补当前列表名
     if (loggedIn) await loadHiddenServer();
     exportBtn.disabled = false;
+    refreshBtn.classList.remove('hidden');
     updateMeta();
     renderList();
   } catch (e) {
@@ -427,10 +424,30 @@ function viewingSelf() {
     && String(lastData.username).toLowerCase() === String(me).toLowerCase();
 }
 
-// 可见列表：推荐池前 shownCount 条（无限滚动渐进展示，池上限 50）
+// 展示顺序：默认按排名；"刷新"后按随机重排（中途隐藏/候补顶替后，仍保留原乱序并补回新条目）
+function orderedPool() {
+  const base = poolRecs();
+  if (!poolOrder) return base;
+  const rankMap = new Map(base.map((r, i) => [r.subject_id, i]));
+  const ordered = poolOrder.filter(r => rankMap.has(r.subject_id));
+  const seen = new Set(ordered.map(r => r.subject_id));
+  ordered.push(...base.filter(r => !seen.has(r.subject_id)));
+  return ordered;
+}
+
+function shuffleArray(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// 可见列表：展示顺序前 shownCount 条（无限滚动渐进展示，池上限 50）
 function visibleRecs() {
   if (!lastData) return [];
-  return poolRecs().slice(0, shownCount);
+  return orderedPool().slice(0, shownCount);
 }
 
 /* ---- 无限滚动加载 ----
@@ -465,7 +482,6 @@ function renderList() {
   list.innerHTML = visibleRecs().map((r, i) => `
     <div class="card" data-sid="${r.subject_id}" title="点击查看详情">
       <div class="cover-wrap">
-        <span class="rank">${i + 1}</span>
         <img class="cover" src="/img/${r.subject_id}" loading="lazy" alt="" onerror="this.remove()">
       </div>
       <div class="info">
@@ -567,6 +583,15 @@ if (sentinel && 'IntersectionObserver' in window) {
   }, { rootMargin: '320px' });
   io.observe(sentinel);
 }
+
+// 刷新（原"换一批"）：随机重排推荐池，回到初始 15 条；继续下滑仍从池中渐进加载
+refreshBtn.addEventListener('click', () => {
+  if (!lastData) return;
+  poolOrder = shuffleArray(poolRecs());
+  shownCount = 15;
+  renderList();
+  updateMeta();
+});
 
 async function clearAllHidden() {
   if (!loggedIn) { alert('请先登录'); return; }

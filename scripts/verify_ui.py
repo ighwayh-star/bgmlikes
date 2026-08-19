@@ -256,6 +256,29 @@ async def run_index_scroll(browser):
     n = len(await page.query_selector_all(".card"))
     check("index scroll loads full pool (40)", n == 40, str(n))
 
+    # 排序编号已移除：卡片上无 rank 徽标
+    rank = await page.query_selector(".card .rank")
+    check("index no rank badge", rank is None)
+
+    # 刷新（换一批）按钮：存在、文案"刷新"、点击后随机重排池并回到初始 15 条
+    rb = await page.query_selector("#refresh")
+    check("index refresh button present", rb is not None)
+    rbtxt = await page.text_content("#refresh")
+    check("index refresh button text=刷新", rbtxt is not None and "刷新" in rbtxt, rbtxt or "")
+    await page.click("#refresh")
+    await page.wait_for_timeout(250)
+    n2 = len(await page.query_selector_all(".card"))
+    check("index refresh resets to 15 cards", n2 == 15, str(n2))
+    # 刷新后继续滚动：仍从池中渐进加载到全部（重排后池内无重复）
+    for _ in range(8):
+        await page.evaluate(
+            "document.getElementById('list-sentinel').scrollIntoView({behavior:'instant',block:'end'})")
+        await page.wait_for_timeout(250)
+    n3 = len(await page.query_selector_all(".card"))
+    sids = await page.evaluate("[...document.querySelectorAll('.card')].map(c => c.dataset.sid).join(',')")
+    check("index refresh keeps scroll loading to pool (40)", n3 == 40, str(n3))
+    check("index refresh pool no dup sids", len(set(sids.split(','))) == 40, sids)
+
     # 标题在页面左上角：topbar 通栏，左缘贴近视口
     box = await page.evaluate("document.querySelector('.topbar').getBoundingClientRect().left")
     check("index topbar title at top-left", box < 8, str(box))
