@@ -311,6 +311,7 @@ class Recommender:
         era_gap_year_span: float = 50.0,  # 年份差权重 f 的饱和跨度：Δ=year_span 时 f=1（.env ERA_GAP_YEAR_SPAN 可调）
         era_gap_shape: str = "log",    # 年份差权重形状：'log'=log1p(Δ)/log1p(span) 对数饱和（推荐，对称性好）；'lin'=Δ/span 线性 clip
         similar_alpha: float = 0.5,    # 相似动画混合系数：α×标签余弦 + (1−α)×共同观看余弦（浮窗"相似"用，.env SIMILAR_ALPHA 可调）
+        site_blocked: set[int] | frozenset[int] = frozenset(),  # 站点级永久屏蔽：推荐/相似候选一律排除（2026-08-19）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
         hot_share_target: float = 0.5,  # 推荐池前 min(k,40) 里高热度占比目标（自适应 γ 校准，仅 adaptive 时用）
         gamma_max: float = 0.8,         # 自适应 γ 上限
@@ -333,6 +334,7 @@ class Recommender:
         self._era_gap_year_span = era_gap_year_span
         self._era_gap_shape = era_gap_shape
         self._similar_alpha = similar_alpha
+        self._site_blocked = set(site_blocked)
         self._hot_rank_threshold = hot_rank_threshold
         self._hot_share_target = hot_share_target
         self._gamma_max = gamma_max
@@ -375,6 +377,11 @@ class Recommender:
         self._items = sorted(item_set)
         self._iidx = {sid: i for i, sid in enumerate(self._items)}
         n_items = len(self._items)
+
+        # 站点屏蔽：语料内命中者建索引，推荐/相似候选过滤用（语料外条目本就不在候选）
+        self._blocked_idx: set[int] = {
+            self._iidx[sid] for sid in self._site_blocked if sid in self._iidx
+        }
 
         # 每部动画的首播年份（era gap boost 用）：date 前 4 位有效才计入，缺失=0
         self._item_year = np.zeros(n_items, dtype=np.float64)
@@ -640,6 +647,8 @@ class Recommender:
         mask[self._fr == self._fr[i]] = False  # 同 franchise（续作/剧场版/系列）
         mask[self._is_side_content] = False  # 番外/剧场版（type-11）
         mask[~self._is_jp] = False  # 非日本动画
+        for bi in self._blocked_idx:
+            mask[bi] = False  # 站点屏蔽：相似列表也不出现（2026-08-19）
         cand = np.flatnonzero(mask)
         if cand.size == 0:
             return []
@@ -705,6 +714,7 @@ class Recommender:
             and (profile_nsfw or not self._nsfw[i])
             and self._is_jp[i]               # 只保留日本动画（2026-08-11）
             and not self._is_side_content[i]  # 番外/剧场版一律不进列表（2026-08-12 升级：不限平台）
+            and i not in self._blocked_idx    # 站点屏蔽：永久排除（2026-08-19）
         ]
         # franchise 去重 + 续作排除（2026-08-12 产品要求升级）：每系列只保留"第一部"
         # （组内最早首播日），续作/剧场版/番外一律丢弃，不回落。

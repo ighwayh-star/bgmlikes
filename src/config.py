@@ -50,3 +50,37 @@ def oauth_configured() -> bool:
         and load_optional("OAUTH_CLIENT_SECRET")
         and load_optional("OAUTH_REDIRECT_URI")
     )
+
+
+# 站点级永久屏蔽（subject_id 集合）：任何发现入口（推荐/每日放送/热门/搜索/相似动画/详情）
+# 一律不再出现。《我的英雄学院》全系列 24 条（TV 1-7 季 + 最终季 + Memories + Vigilante 外传
+# + 剧场版/OVA/特别篇/其他平台），2026-08-19 站点政策决定。
+# .env SITE_BLOCKLIST 可追加更多（逗号分隔，自动并入）。
+DEFAULT_BLOCKED: frozenset[int] = frozenset({
+    # TV 季（platform 1）
+    150955, 185761, 226677, 262162, 303399, 236657, 425587,  # 第一~七季
+    518413,                                        # FINAL SEASON（2025-10）
+    488960,                                        # Memories
+    529995, 567417,                                # 正义使者(非法英雄) 外传 S1/S2
+    644516,                                        # No.170＋1『More』
+    # OAD / OVA / 剧场版总集篇特别篇（platform 2）
+    190704, 339266, 299532,
+    # 剧场版（platform 3）
+    231647, 278429, 321117, 449154, 467909, 536626,
+    # 其他平台（5/0）
+    381212, 386475, 646464,
+})
+
+
+def load_blocklist() -> set[int]:
+    """返回站点屏蔽 subject_id 集合（默认全系列 + .env SITE_BLOCKLIST 追加）。
+
+    推荐/每日放送/热门/搜索/相似/详情共用一份；为空=不屏蔽。
+    """
+    out = set(DEFAULT_BLOCKED)
+    raw = load_optional("SITE_BLOCKLIST", "")
+    for part in raw.replace("，", ",").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.add(int(part))
+    return out

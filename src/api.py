@@ -7,6 +7,7 @@ OAuth 登录：/auth/login · /auth/callback · /auth/me · /auth/logout
 """
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import time
@@ -31,7 +32,7 @@ from src.auth import (
     get_user_access_token,
 )
 from src.bangumi_api import BangumiAPI, CollectionEntry
-from src.config import load_optional, load_token
+from src.config import load_blocklist, load_optional, load_token
 from src.dataset import APISource, CacheSource
 from src.images import CoverCache
 from src.recommender import Recommendation, Recommender
@@ -158,6 +159,9 @@ def create_app() -> FastAPI:
     # era_gap_year_span：年份差权重饱和跨度（Δ=span 时 f=1），.env 可调
     # era_gap_shape：权重形状 'log'（log1p 饱和，对称性好）/ 'lin'（线性 clip），.env 可调
     # similar_alpha：浮窗"相似动画"混合系数（α×标签余弦 + (1−α)×共同观看余弦），.env 可调
+    # site_blocked：站点级永久屏蔽（默认《我的英雄学院》全系列，.env SITE_BLOCKLIST 追加），
+    #   推荐/相似/每日/热门/搜索/详情统一过滤，任何发现入口不再出现
+    site_blocked = load_blocklist()
     recommender = Recommender(
         DB_PATH, df_min_rated=int(load_optional("DF_MIN_RATED", "300")),
         rate_center=float(load_optional("RATE_CENTER", "5")),
@@ -169,6 +173,7 @@ def create_app() -> FastAPI:
         era_gap_year_span=float(load_optional("ERA_GAP_YEAR_SPAN", "50")),
         era_gap_shape=load_optional("ERA_GAP_SHAPE", "log"),
         similar_alpha=float(load_optional("SIMILAR_ALPHA", "0.5")),
+        site_blocked=site_blocked,
     )
     cover_cache = CoverCache(COVER_DIR, api)  # 封面图中转（大陆直连 lain.bgm.tv 超时）
     subject_store = SubjectStore(DB_PATH, api)  # 卡片浮窗简介：本地表 → 缓存表 → 实时拉取
@@ -234,8 +239,21 @@ def create_app() -> FastAPI:
         if resp.status_code != 200:
             raise HTTPException(status_code=502,
                                 detail=f"Bangumi 放送表返回 {resp.status_code}")
-        return Response(content=resp.content, media_type="application/json",
-                        headers={"Cache-Control": "public, max-age=1800"})
+        # 站点屏蔽：从放送表剥离被屏蔽条目（2026-08-19，每日放送/本季全览共用此端点）
+        try:
+            payload = resp.json()
+        except ValueError:
+            raise HTTPException(status_code=502, detail="放送表 JSON 解析失败")
+        if isinstance(payload, list):
+            for day in payload:
+                if isinstance(day, dict) and isinstance(day.get("items"), list):
+                    day["items"] = [it for it in day["items"]
+                                    if isinstance(it, dict) and it.get("id") not in site_blocked]
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            media_type="application/json",
+            headers={"Cache-Control": "public, max-age=1800"},
+        )
 
     # ---- OAuth 登录 ----
     @app.get("/auth/login")
@@ -393,6 +411,8 @@ def create_app() -> FastAPI:
         items = []
         for i in order[:limit]:
             sid = recommender._items[i]
+            if sid in site_blocked:
+                continue  # 站点屏蔽（2026-08-19）
             meta = recommender.subject_meta[sid]
             if meta.get("nsfw") and not profile_nsfw:
                 continue
@@ -424,7 +444,8 @@ def create_app() -> FastAPI:
         except RuntimeError as e:
             logger.exception("搜索失败：%s", q)
             raise HTTPException(status_code=502, detail=f"搜索失败：{e}")
-        items = [_rate_out(it["subject_id"], it) for it in result["data"]]
+        items = [_rate_out(it["subject_id"], it) for it in result["data"]
+                 if it["subject_id"] not in site_blocked]  # 站点屏蔽（2026-08-19）
         out = {"data": items, "total": result["total"]}
         _SEARCH_CACHE[key] = (time.time(), out)
         if len(_SEARCH_CACHE) > _SEARCH_CACHE_MAX:
@@ -579,6 +600,8 @@ def create_app() -> FastAPI:
         404：条目不在本地语料 / Bangumi 不存在；502：实时拉简介失败（前端 error 态，不阻塞页面）。
         """
         meta = recommender.subject_meta.get(subject_id)
+        if subject_id in site_blocked:
+            raise HTTPException(status_code=404, detail="条目不可用")
         if meta is None:
             raise HTTPException(status_code=404, detail="条目不在本地语料中")
         try:
