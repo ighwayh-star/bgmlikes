@@ -183,6 +183,7 @@ async def run_index(browser, logged_in):
         href = await mbgm.get_attribute("href")
         check("index modal BGM href is subject url",
               re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+        check("index modal BGM icon pill", await mbgm.query_selector(".mi-ico") is not None)
     if mbili:
         href = await mbili.get_attribute("href")
         check("index modal Bili href has keyword", href and "keyword=" in href, href or "")
@@ -411,6 +412,7 @@ async def run_rate(browser):
         href = await bgm.get_attribute("href")
         check("rate card BGM href is subject url",
               re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+        check("rate card BGM icon pill", await bgm.query_selector(".link-ico") is not None)
     if bili:
         href = await bili.get_attribute("href")
         check("rate card Bili href has keyword", href and "keyword=" in href, href or "")
@@ -428,6 +430,7 @@ async def run_rate(browser):
         href = await mbgm.get_attribute("href")
         check("rate modal BGM href is subject url",
               re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+        check("rate modal BGM icon pill", await mbgm.query_selector(".mi-ico") is not None)
     if mbili:
         href = await mbili.get_attribute("href")
         check("rate modal Bili href has keyword", href and "keyword=" in href, href or "")

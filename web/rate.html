@@ -119,19 +119,23 @@
     background: rgba(255,255,255,.7); color: var(--sub); cursor: pointer; font-family: inherit; }
   .clear-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255,179,209,.2); }
 
-  /* 卡片外链：BGM 条目 / B站 搜索（2026-08-19，对齐 /likes /daily 卡片） */
-  .links { display: flex; gap: 8px; margin-top: 8px; }
+  /* 卡片外链：图标胶囊（同推荐页卡片），右侧呈现（2026-08-19） */
+  .links { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
   .link {
-    display: inline-flex; align-items: center; gap: 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 30px; padding: 0 9px; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.6);
     font-size: 12px; font-weight: 600; text-decoration: none;
-    padding: 3px 12px; border-radius: 999px; border: 1px solid;
-    transition: background .15s, transform .15s;
+    opacity: .8; transition: opacity .15s, transform .15s, background .15s;
   }
-  .link:hover { transform: translateY(-1px); }
-  .link-bgm { color: #7c8cf8; border-color: rgba(124,140,248,.32); background: rgba(124,140,248,.08); }
-  .link-bgm:hover { background: rgba(124,140,248,.14); }
-  .link-bili { color: #fb7299; border-color: rgba(251,114,153,.32); background: rgba(251,114,153,.08); }
-  .link-bili:hover { background: rgba(251,114,153,.14); }
+  .link:hover { opacity: 1; transform: translateY(-1px); }
+  .link .link-ico { width: 18px; height: 18px; border-radius: 4px; display: block; }
+  .link .link-txt { display: none; }
+  .link.no-ico .link-txt { display: inline; }
+  .link-bgm { border-color: rgba(124,140,248,.32); }
+  .link-bgm:hover { background: rgba(124,140,248,.12); }
+  .link-bili { border-color: rgba(251,114,153,.32); }
+  .link-bili:hover { background: rgba(251,114,153,.12); }
 
   /* 卡片浮窗：点击卡片 → 简介 + 相似动画 + 跳转（2026-08-19，对齐 /likes /daily） */
   .modal-overlay {
@@ -158,7 +162,7 @@
     width: 120px; height: 168px; object-fit: cover; border-radius: 12px;
     background: #ffe9f2; flex-shrink: 0; box-shadow: 0 2px 10px rgba(242,109,157,.2);
   }
-  .modal-title { font-size: 19px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+  .modal-title { flex: 1; min-width: 0; font-size: 19px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
   .modal-rating { color: #e8a33d; font-weight: 700; font-size: 13px; margin-top: 4px; }
   .modal-date, .modal-sub { color: var(--sub); font-size: 13px; margin-top: 3px; }
   .modal-tag {
@@ -166,19 +170,24 @@
     border-radius: 999px; background: rgba(242,109,157,.1); color: var(--accent);
     border: 1px solid rgba(242,109,157,.22);
   }
-  .modal-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .modal-info { flex: 1; min-width: 0; }
+  .modal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-right: 32px; /* 右侧留出关闭按钮区（✕ 绝对定位在 modal 右上角） */ }
+  .modal-actions { display: flex; gap: 6px; flex-shrink: 0; margin-top: 2px; }
   .modal-link {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 5px 13px; border-radius: 999px;
-    border: 1px solid transparent; text-decoration: none;
-    font-size: 12.5px; font-weight: 600; cursor: pointer;
-    transition: transform .15s, background .15s, border-color .15s;
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 30px; padding: 0 9px; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.22); background: rgba(255,255,255,.6);
+    font-size: 12px; font-weight: 600; text-decoration: none;
+    opacity: .8; transition: opacity .15s, transform .15s, background .15s;
   }
-  .modal-link:hover { transform: translateY(-1px); }
-  .modal-link-bgm { color: #4a56c8; background: rgba(124,140,248,.12); border-color: rgba(124,140,248,.35); }
-  .modal-link-bgm:hover { background: rgba(124,140,248,.22); }
-  .modal-link-bili { color: #e0557d; background: rgba(251,114,153,.12); border-color: rgba(251,114,153,.35); }
-  .modal-link-bili:hover { background: rgba(251,114,153,.22); }
+  .modal-link:hover { opacity: 1; transform: translateY(-1px); }
+  .modal-link .mi-ico { width: 18px; height: 18px; border-radius: 4px; display: block; }
+  .modal-link .mi-txt { display: none; }
+  .modal-link.no-ico .mi-txt { display: inline; }
+  .modal-link-bgm { border-color: rgba(124,140,248,.32); }
+  .modal-link-bgm:hover { background: rgba(124,140,248,.12); }
+  .modal-link-bili { border-color: rgba(251,114,153,.32); }
+  .modal-link-bili:hover { background: rgba(251,114,153,.12); }
   .modal-section { font-size: 13px; color: var(--sub); font-weight: 700; margin: 16px 0 8px; }
   .modal-summary { font-family: "SimHei","Heiti SC","Microsoft YaHei","PingFang SC",sans-serif; font-size: 15px; line-height: 1.75; color: var(--text); white-space: pre-line; word-break: break-word; }
   .similar-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -270,6 +279,8 @@ const modalOverlay = document.getElementById('modal');
 const modalBody = document.getElementById('modal-body');
 const modalCache = new Map();   // sid -> subject 详情（FIFO 300）
 let modalOpenSid = null;        // 当前打开浮窗的 subject_id（竞态守卫）
+// BGM 站点图标（与推荐页卡片外链同一份，data: URI 内联；浮窗/卡片跳转按钮用）
+const BGM_ICO = 'data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAQAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALJu+f//////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAsm75ELJu+cCybvn/sm75/7Ju+f+ybvn//////7Ju+f+ybvn/sm75/7Ju+f+ybvn/sm75/7Ju+f+ybvnAsm75ELJu+cCybvn/sm75/7Ju+f+ybvn/sm75////////////sm75/7Ju+f+ybvn/sm75/7Ju+f+ybvn/sm75/7Ju+cCwaPn/sGj5/9iz/P///////////////////////////////////////////////////////////9iz/P+waPn/rF/6/6xf+v//////////////////////////////////////////////////////////////////////rF/6/6lW+/+pVvv/////////////////////////////////zXn2/////////////////////////////////6lW+/+lTfz/pU38///////Nefb/zXn2/8159v//////zXn2///////Nefb//////8159v/Nefb/zXn2//////+lTfz/okT8/6JE/P//////////////////////2bb8/8159v/Nefb/zXn2/9m2/P//////////////////////okT8/546/f+eOv3//////8159v/Nefb/zXn2////////////////////////////zXn2/8159v/Nefb//////546/f+bMf7/mzH+//////////////////////////////////////////////////////////////////////+bMf7/lyj+wJco/v/Mk/7////////////////////////////////////////////////////////////Mk///lyj+wJQf/xCUH//AlB///5Qf//+UH///lB///5Qf//+aP///mj///5o///+UH///lB///5Qf//+UH///lB//wJQf/xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/5o////Nefb/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAM159v8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAzXn2/wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADNefb/AAAAAAAAAAAAAAAA+f8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/j8AAP3fAAD77wAA9/cAAA==';
 
 let loggedIn = false;
 let loadedOnce = false;          // 首次登录后只启动一次列表加载
@@ -346,8 +357,10 @@ function cardHTML(it) {
         (it.nsfw ? '<span class="nsfw-tag">NSFW</span>' : '') +
       '</div>' +
       '<div class="links">' +
-        '<a class="link link-bgm" href="https://bgm.tv/subject/' + it.subject_id + '" target="_blank" rel="noopener" title="在 Bangumi 打开条目">Bangumi</a>' +
-        '<a class="link link-bili" href="https://search.bilibili.com/all?keyword=' + encodeURIComponent(it.name_cn || it.name || '') + '" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画">B站</a>' +
+        '<a class="link link-bgm" href="https://bgm.tv/subject/' + it.subject_id + '" target="_blank" rel="noopener" title="在 Bangumi 打开条目">' +
+          '<img class="link-ico" src="' + BGM_ICO + '" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add(\'no-ico\')"><span class="link-txt">BGM</span></a>' +
+        '<a class="link link-bili" href="https://search.bilibili.com/all?keyword=' + encodeURIComponent(it.name_cn || it.name || '') + '" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画">' +
+          '<img class="link-ico" src="https://www.bilibili.com/favicon.ico" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add(\'no-ico\')"><span class="link-txt">B站</span></a>' +
       '</div>' +
       '<div class="stars" data-sid="' + it.subject_id + '">';
   for (let i = 1; i <= 10; i++) h += '<span class="star" data-v="' + i + '">★</span>';
@@ -585,14 +598,18 @@ function renderModal(d) {
   modalBody.innerHTML = `
     <div class="modal-head">
       <img class="modal-cover" src="/img/${d.subject_id}" loading="lazy" alt="" onerror="this.remove()">
-      <div><div class="modal-title">${escapeHtml(d.name || '')}</div>
-      ${d.rating ? '<div class="modal-rating">⭐ ' + d.rating.toFixed(1) + '</div>' : ''}
-      ${d.date ? '<div class="modal-date">' + escapeHtml(d.date) + '</div>' : ''}
-      ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}
-      <div class="modal-actions">
-        <a class="modal-link modal-link-bgm" href="https://bgm.tv/subject/${d.subject_id}" target="_blank" rel="noopener" title="在 Bangumi 查看条目">Bangumi</a>
-        <a class="modal-link modal-link-bili" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(d.name_cn || d.name || '')}" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画">B站</a>
-      </div></div>
+      <div class="modal-info">
+        <div class="modal-title-row">
+          <div class="modal-title">${escapeHtml(d.name || '')}</div>
+          <div class="modal-actions">
+            <a class="modal-link modal-link-bgm" href="https://bgm.tv/subject/${d.subject_id}" target="_blank" rel="noopener" title="在 Bangumi 打开条目"><img class="mi-ico" src="${BGM_ICO}" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('no-ico')"><span class="mi-txt">BGM</span></a>
+            <a class="modal-link modal-link-bili" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(d.name_cn || d.name || '')}" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画"><img class="mi-ico" src="https://www.bilibili.com/favicon.ico" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('no-ico')"><span class="mi-txt">B站</span></a>
+          </div>
+        </div>
+        ${d.rating ? '<div class="modal-rating">⭐ ' + d.rating.toFixed(1) + '</div>' : ''}
+        ${d.date ? '<div class="modal-date">' + escapeHtml(d.date) + '</div>' : ''}
+        ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}
+      </div>
     </div>
     ${modalStarsHtml(d.subject_id)}
     <div class="modal-section">简介</div>
