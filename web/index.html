@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>bgmlikes · Bangumi 动画推荐</title>
+<meta name="description" content="输入 Bangumi 用户名，获得个性化动画推荐。协同过滤 + 标签偏好 + 热度抑制，发现冷门佳作。">
+<meta property="og:site_name" content="bgmLikes">
+<meta property="og:title" content="bgmLikes · Bangumi 动画推荐">
+<meta property="og:description" content="输入 Bangumi 用户名，基于你的收藏生成个性化动画推荐，发现冷门佳作。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://bgmhiway.asia/likes">
+<meta property="og:image" content="https://bgmhiway.asia/pics/article_likes.jpg">
+<meta name="twitter:card" content="summary_large_image">
 <style>
   :root {
     --bg1: #fff0f5; --bg2: #fff8fb;
@@ -755,6 +763,19 @@ async function exportJpg() {
         ctx.fillText(lines[1], nameX, midY + 24);
       }
     });
+
+    // 底部网址水印（传播入口：每张分享图都带上站点地址）
+    const wm = 'bgmhiway.asia';
+    ctx.font = '600 13px ' + FONT;
+    const wmW = ctx.measureText(wm).width;
+    const wmX = W - PAD - wmW - 8;
+    const wmY = H - 20;
+    ctx.fillStyle = 'rgba(255,255,255,.88)';
+    roundRect(ctx, wmX - 8, wmY - 12, wmW + 16, 22, 11);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(242,109,157,.92)';
+    ctx.textAlign = 'left';
+    ctx.fillText(wm, wmX, wmY);
 
     const safeName = (data.username || 'user').replace(/[\\/:*?"<>|\s]/g, '_');
     canvas.toBlob(blob => {

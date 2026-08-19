@@ -41,7 +41,8 @@ from src.subject_store import SubjectStore
 logger = logging.getLogger("bgmlikes")
 DB_PATH = Path(__file__).resolve().parent.parent / "data" / "collections.db"
 AUTH_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "auth.db"
-WEB_INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+WEB_INDEX = WEB_DIR / "index.html"
 WEB_HOME = Path(__file__).resolve().parent.parent / "web" / "home.html"
 WEB_DAILY = Path(__file__).resolve().parent.parent / "web" / "daily.html"
 WEB_RATE = Path(__file__).resolve().parent.parent / "web" / "rate.html"
@@ -654,6 +655,24 @@ def create_app() -> FastAPI:
     def rate() -> FileResponse:
         # 打分页：登录后搜索 BGM 动画快速打分
         return FileResponse(WEB_RATE, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/sitemap.xml")
+    def sitemap() -> FileResponse:
+        """站点地图：供百度/必应等搜索引擎提交抓取。"""
+        return FileResponse(
+            WEB_DIR / "sitemap.xml",
+            media_type="application/xml",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    @app.get("/robots.txt")
+    def robots() -> FileResponse:
+        """爬虫协议：放行内容页、屏蔽登录路径、指向 sitemap。"""
+        return FileResponse(
+            WEB_DIR / "robots.txt",
+            media_type="text/plain",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     @app.get("/pics/{filename}")
     def pics(filename: str) -> FileResponse:
