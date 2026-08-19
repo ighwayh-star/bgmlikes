@@ -45,7 +45,7 @@
   h1 { font-size: 34px; color: #e85f8d; letter-spacing: 2px; margin-bottom: 10px;
     text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35); }
   .tagline { color: var(--sub); font-size: 15px; margin-bottom: 40px; line-height: 1.7; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
   .entry {
     display: block; text-decoration: none; color: inherit;
     background: var(--card); border: 1px solid rgba(255,255,255,.65);
@@ -79,6 +79,11 @@
       <div class="emoji">📺</div>
       <h2>每日放送</h2>
       <p>追踪今天 / 昨天更新的番剧，查看本季全览</p>
+    </a>
+    <a class="entry" href="/rate">
+      <div class="emoji">⭐</div>
+      <h2>快速打分</h2>
+      <p>登录后搜索 BGM 动画，10 星评分 + 标记看过，一气呵成</p>
     </a>
   </div>
 </div>

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 import sqlite3
 import time
@@ -21,6 +22,8 @@ from pathlib import Path
 import httpx
 
 from src.config import load_optional
+
+logger = logging.getLogger("bgmlikes")
 
 AUTH_HOST = "https://bgm.tv"
 API_HOST = "https://api.bgm.tv"
@@ -89,6 +92,53 @@ def exchange_code(code: str) -> OAuthTokens:
         expires_at=time.time() + int(j.get("expires_in", 604800)),
         user_id=int(j.get("user_id", 0)),
     )
+
+
+def refresh_tokens(refresh_token: str) -> OAuthTokens:
+    """用 refresh_token 续期，返回新的 OAuthTokens（user_id 原样带回）。"""
+    if not configured():
+        raise OAuthError("OAuth 未配置：缺少 OAUTH_CLIENT_ID/SECRET")
+    data = {
+        "grant_type": "refresh_token",
+        "client_id": _client_id(),
+        "client_secret": load_optional("OAUTH_CLIENT_SECRET"),
+        "refresh_token": refresh_token,
+    }
+    with httpx.Client(timeout=15) as c:
+        r = c.post(f"{AUTH_HOST}/oauth/access_token", data=data,
+                   headers={"User-Agent": USER_AGENT})
+    if r.status_code != 200:
+        raise OAuthError(f"token 续期失败：HTTP {r.status_code} {r.text[:200]}")
+    j = r.json()
+    return OAuthTokens(
+        access_token=j.get("access_token", ""),
+        refresh_token=j.get("refresh_token", j.get("access_token", "")),
+        expires_at=time.time() + int(j.get("expires_in", 604800)),
+        user_id=int(j.get("user_id", 0)),
+    )
+
+
+def get_user_access_token(auth: AuthStore, user_id: int) -> str | None:
+    """取用户当前有效的 OAuth access_token（打分/写收藏专用）。
+
+    过期时用 refresh_token 续期并把新 token 落库；无 token 或续期失败返回 None。
+    """
+    u = auth.get_user(user_id)
+    if not u or not u.get("access_token"):
+        return None
+    if u["token_expires_at"] and u["token_expires_at"] > time.time() + 60:
+        return u["access_token"]
+    refresh = u.get("refresh_token")
+    if not refresh:
+        logger.warning("用户 %s 无 refresh_token，无法续期", user_id)
+        return None
+    try:
+        tok = refresh_tokens(refresh)
+    except OAuthError:
+        logger.warning("用户 %s 续期失败，需重新登录", user_id)
+        return None
+    auth.upsert_user(tok.user_id or user_id, u.get("username", ""), tok)
+    return tok.access_token
 
 
 def fetch_me(access_token: str) -> str:

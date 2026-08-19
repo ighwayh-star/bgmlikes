@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import httpx
+import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
@@ -27,6 +28,7 @@ from src.auth import (
     configured as oauth_configured,
     exchange_code,
     fetch_me,
+    get_user_access_token,
 )
 from src.bangumi_api import BangumiAPI, CollectionEntry
 from src.config import load_optional, load_token
@@ -41,15 +43,22 @@ AUTH_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "auth.db"
 WEB_INDEX = Path(__file__).resolve().parent.parent / "web" / "index.html"
 WEB_HOME = Path(__file__).resolve().parent.parent / "web" / "home.html"
 WEB_DAILY = Path(__file__).resolve().parent.parent / "web" / "daily.html"
+WEB_RATE = Path(__file__).resolve().parent.parent / "web" / "rate.html"
 COVER_DIR = Path(__file__).resolve().parent.parent / "data" / "covers"
 PICS_DIR = Path(__file__).resolve().parent.parent / "pics"  # 发帖用截图直链（本地不上 git）
 
 CALENDAR_URL = "https://api.bgm.tv/calendar"
 # 每日放送「只看我的」覆盖的收藏状态（"抛弃"不显示）
 COLLECTED_STATES = {"在看", "看过", "想看", "搁置"}
-# /daily/collected 内存缓存（重用户收藏数百条，拉取数秒；5 分钟 TTL 避免每次页面加载都打 Bangumi）
-_COLLECTED_CACHE: dict[int, tuple[float, list[dict]]] = {}
+# 用户收藏内存缓存：{user_id: (ts, {subject_id: {"state","rate"}})}。全状态缓存（含"抛弃"），
+# 输出端按需过滤（daily 用 COLLECTED_STATES；/api/rate/collections 全量）。5 分钟 TTL 避免每次打 Bangumi。
+_COLLECTED_CACHE: dict[int, tuple[float, dict[int, dict]]] = {}
 _COLLECTED_TTL = 300
+# /api/rate/search 搜索结果缓存：键 (q, limit)，TTL 300，上限 200（防长期膨胀 FIFO）。
+# 只缓存成功结果；搜索是 POST /v0/search/subjects 且带节流，防抖后的重复查询不该重复打 Bangumi。
+_SEARCH_CACHE: dict[tuple[str, int], tuple[float, dict]] = {}
+_SEARCH_TTL = 300
+_SEARCH_CACHE_MAX = 200
 # /v1/recommend 收藏拉取缓存：拉取是推荐最耗时环节（分页 + 0.5s 节流，重用户 3-15s），
 # 重算仅 ~50ms，故缓存"拉取结果"而非推荐输出（算法改动即时生效、换一批不受影响）。
 # 只缓存 API 实时路径成功结果（cache 降级结果廉价且可能过期，不缓存）。TTL 可调。
@@ -93,6 +102,10 @@ class RecommendRequest(BaseModel):
 
 class HiddenIn(BaseModel):
     hidden: bool
+
+
+class RateIn(BaseModel):
+    rate: int  # 1..10（BGM 打分；点击即同时标记"看过"）
 
 
 class ItemOut(BaseModel):
@@ -162,6 +175,37 @@ def create_app() -> FastAPI:
     auth = AuthStore(AUTH_DB_PATH)  # 用户登录会话 + "不感兴趣"偏好（独立 auth.db）
     logger.info("recommender loaded: %s", recommender.stats())
     logger.info("oauth logged: %s", oauth_configured())
+
+    def _user_collections_map(sess: Session, *, fetch: bool = False) -> dict[int, dict] | None:
+        """{subject_id: {"state","rate"}}，TTL 300。
+
+        fetch=False：冷缓存直接返回 None（不阻塞 popular/search 列表渲染，星星由前端 overlay 补）；
+        fetch=True（/api/rate/collections 与 /daily/collected 预热）：实时拉取，失败抛 502。
+        """
+        cached = _COLLECTED_CACHE.get(sess.user_id)
+        if cached and time.time() - cached[0] < _COLLECTED_TTL:
+            return cached[1]
+        if not fetch:
+            return None
+        try:
+            entries = api.fetch_collections(sess.username, subject_type=2, max_seconds=15)
+        except (httpx.HTTPError, RuntimeError) as e:
+            logger.exception("拉取收藏列表失败：%s", e)
+            raise HTTPException(status_code=502, detail=f"获取收藏列表失败：{e}")
+        m = {e.subject_id: {"state": e.state, "rate": e.rate} for e in entries}
+        _COLLECTED_CACHE[sess.user_id] = (time.time(), m)
+        return m
+
+    def _cache_set_state(sess: Session, subject_id: int, state: str, rate: int) -> None:
+        """打分/收藏成功后原位更新缓存，后续请求立即可见（不重建拉取）。"""
+        cached = _COLLECTED_CACHE.get(sess.user_id)
+        if cached and time.time() - cached[0] < _COLLECTED_TTL:
+            cached[1][subject_id] = {"state": state, "rate": rate}
+
+    def _cache_drop(sess: Session, subject_id: int) -> None:
+        cached = _COLLECTED_CACHE.get(sess.user_id)
+        if cached and time.time() - cached[0] < _COLLECTED_TTL:
+            cached[1].pop(subject_id, None)
 
     app = FastAPI(title="bgmlikes", version="0.1")
 
@@ -312,20 +356,153 @@ def create_app() -> FastAPI:
         sess = _session_from_request(request, auth)
         if sess is None:
             raise HTTPException(status_code=401, detail="请先登录")
-        cached = _COLLECTED_CACHE.get(sess.user_id)
-        if cached and time.time() - cached[0] < _COLLECTED_TTL:
-            return {"items": cached[1]}
-        try:
-            entries = api.fetch_collections(sess.username, subject_type=2, max_seconds=15)
-        except (httpx.HTTPError, RuntimeError) as e:
-            logger.exception("拉取收藏列表失败：%s", e)
-            raise HTTPException(status_code=502, detail=f"获取收藏列表失败：{e}")
+        m = _user_collections_map(sess, fetch=True)  # 预热并复用 /api/rate 收藏缓存
         items = [
-            {"id": e.subject_id, "state": e.state}
-            for e in entries if e.state in COLLECTED_STATES
+            {"id": sid, "state": d["state"]}
+            for sid, d in m.items() if d["state"] in COLLECTED_STATES
         ]
-        _COLLECTED_CACHE[sess.user_id] = (time.time(), items)
         return {"items": items}
+
+    # ---- /rate 打分页（登录后搜索 BGM 动画快速打分）----
+    # 收藏拉取不阻塞列表：popular/search 用冷缓存（fetch=False，降级空星，前端 overlay 补）；
+    # 只有 /api/rate/collections 预热才实时拉取。写操作走用户 OAuth token（站点 token 写到站长账号）。
+    def _rate_out(sid: int, it: dict) -> dict:
+        meta = recommender.subject_meta.get(sid, {})
+        return {
+            "subject_id": sid,
+            "name": meta.get("name") or it.get("name") or it.get("name_cn") or "",
+            "name_cn": meta.get("name_cn") or it.get("name_cn") or "",
+            "score": it.get("score") or meta.get("score", 0.0),
+            "date": it.get("date") or meta.get("date", ""),
+            "tags": meta.get("meta_tags") or it.get("tags") or [],
+            "nsfw": it.get("nsfw") or bool(meta.get("nsfw")),
+        }
+
+    @app.get("/api/rate/popular")
+    def rate_popular(request: Request, limit: int = 50) -> dict:
+        """热门动画（本地语料按收藏数排序，纯热门不设年代/rank 门槛）。
+
+        已看过/已评分的也列出（前端 overlay 显原分）；nsfw 项仅当用户有 nsfw 口味才显示
+        （同推荐池口径：看过+已评分收藏里含 nsfw 条目），冷缓存时默认隐藏。
+        """
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        limit = max(1, min(limit, 200))
+        coll = _user_collections_map(sess) or {}  # fetch=False，冷缓存空星
+        profile_nsfw = any(
+            recommender.subject_meta.get(sid, {}).get("nsfw")
+            for sid, d in coll.items() if d["state"] == "看过" and d["rate"] > 0
+        )
+        order = np.argsort(recommender._pop_rank)  # 升序：rank 1 最热门
+        items = []
+        for i in order[:limit]:
+            sid = recommender._items[i]
+            meta = recommender.subject_meta[sid]
+            if meta.get("nsfw") and not profile_nsfw:
+                continue
+            items.append(_rate_out(sid, meta))
+        return {"data": items, "profile_nsfw": profile_nsfw}
+
+    @app.get("/api/rate/search")
+    def rate_search(request: Request, q: str = "", limit: int = 20) -> dict:
+        """BGM 搜索动画（实时）。不设已看/NSFW 限制：搜索照显全部。
+        合并本地语料 meta 兜底（搜索结果在语料里则用语料元数据，展示更一致）。
+        """
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        q = q.strip()
+        if not q:
+            return {"data": [], "total": 0}
+        limit = max(1, min(limit, 50))
+        key = (q, limit)
+        cached = _SEARCH_CACHE.get(key)
+        if cached and time.time() - cached[0] < _SEARCH_TTL:
+            return cached[1]
+        try:
+            result = api.search_subjects(q, limit=limit, deadline=time.monotonic() + 8)
+        except httpx.HTTPStatusError as e:
+            logger.exception("搜索失败（HTTP %s）：%s", e.response.status_code, q)
+            raise HTTPException(status_code=502,
+                                detail=f"搜索失败：Bangumi 返回 {e.response.status_code}")
+        except RuntimeError as e:
+            logger.exception("搜索失败：%s", q)
+            raise HTTPException(status_code=502, detail=f"搜索失败：{e}")
+        items = [_rate_out(it["subject_id"], it) for it in result["data"]]
+        out = {"data": items, "total": result["total"]}
+        _SEARCH_CACHE[key] = (time.time(), out)
+        if len(_SEARCH_CACHE) > _SEARCH_CACHE_MAX:
+            _SEARCH_CACHE.pop(next(iter(_SEARCH_CACHE)))
+        return out
+
+    @app.get("/api/rate/collections")
+    def rate_collections(request: Request) -> dict:
+        """用户收藏全量（含 rate），打分页 overlay 数据源；profile_nsfw 供前端决定是否重拉热门。"""
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        m = _user_collections_map(sess, fetch=True)
+        items = [
+            {"subject_id": sid, "state": d["state"], "rate": d["rate"]}
+            for sid, d in m.items()
+        ]
+        profile_nsfw = any(
+            recommender.subject_meta.get(sid, {}).get("nsfw")
+            for sid, d in m.items() if d["state"] == "看过" and d["rate"] > 0
+        )
+        return {"items": items, "profile_nsfw": profile_nsfw}
+
+    @app.patch("/api/rate/{subject_id}")
+    def rate_set(request: Request, subject_id: int, body: RateIn) -> dict:
+        """打分 = 标记看过(2) + 评分(1..10)，写到用户真实 BGM 账号（用户 OAuth token）。"""
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        if not (1 <= body.rate <= 10):
+            raise HTTPException(status_code=400, detail="评分须在 1~10")
+        token = get_user_access_token(auth, sess.user_id)
+        if not token:
+            raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+        try:
+            api.set_collection(subject_id, type=2, rate=body.rate, token=token,
+                               deadline=time.monotonic() + 8)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+            logger.exception("打分失败（HTTP %s）：subject %s", e.response.status_code, subject_id)
+            raise HTTPException(status_code=502,
+                                detail=f"Bangumi API 错误：{e.response.status_code}")
+        except RuntimeError as e:
+            logger.exception("打分失败：subject %s", subject_id)
+            raise HTTPException(status_code=502, detail=f"打分失败：{e}")
+        _cache_set_state(sess, subject_id, "看过", body.rate)
+        return {"ok": True, "subject_id": subject_id, "state": "看过", "rate": body.rate}
+
+    @app.delete("/api/rate/{subject_id}")
+    def rate_delete(request: Request, subject_id: int) -> dict:
+        """清除收藏/评分（BGM DELETE，幂等：404 视为已清除）。"""
+        sess = _session_from_request(request, auth)
+        if sess is None:
+            raise HTTPException(status_code=401, detail="请先登录")
+        token = get_user_access_token(auth, sess.user_id)
+        if not token:
+            raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+        try:
+            api.delete_collection(subject_id, token=token, deadline=time.monotonic() + 8)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+            if e.response.status_code != 404:  # 404 = 本就没收藏，幂等成功
+                logger.exception("清除收藏失败（HTTP %s）：subject %s",
+                                 e.response.status_code, subject_id)
+                raise HTTPException(status_code=502,
+                                    detail=f"Bangumi API 错误：{e.response.status_code}")
+        except RuntimeError as e:
+            logger.exception("清除收藏失败：subject %s", subject_id)
+            raise HTTPException(status_code=502, detail=f"清除失败：{e}")
+        _cache_drop(sess, subject_id)
+        return {"ok": True, "subject_id": subject_id}
 
     @app.post("/v1/recommend", response_model=RecommendResponse)
     def recommend(req: RecommendRequest) -> RecommendResponse:
@@ -454,6 +631,11 @@ def create_app() -> FastAPI:
     def daily() -> FileResponse:
         # 每日放送页
         return FileResponse(WEB_DAILY, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/rate")
+    def rate() -> FileResponse:
+        # 打分页：登录后搜索 BGM 动画快速打分
+        return FileResponse(WEB_RATE, headers={"Cache-Control": "no-cache"})
 
     @app.get("/pics/{filename}")
     def pics(filename: str) -> FileResponse:

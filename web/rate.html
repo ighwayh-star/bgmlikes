@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bgmLikes · 快速打分</title>
+<style>
+  :root {
+    --bg1: #fff0f5; --bg2: #fff8fb;
+    --card: rgba(255,255,255,.72);
+    --line: rgba(242,109,157,.18);
+    --text: #4a3f4e; --sub: #b39aa8;
+    --accent: #f26d9d; --accent-soft: #ffb3d1;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+    color: var(--text);
+    font-family: "SimHei","Heiti SC","Microsoft YaHei","PingFang SC",sans-serif;
+    min-height: 100vh;
+  }
+  .petals { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  .petal {
+    position: absolute; top: -8vh; left: 0;
+    width: var(--size, 14px); height: var(--size, 14px);
+    background: radial-gradient(circle at 32% 32%, #ffe3f0, #ffb3d1 55%, #ff8fb8);
+    border-radius: 78% 22% 76% 24% / 62% 40% 60% 38%;
+    opacity: 0;
+    box-shadow: 0 0 6px rgba(242,109,157,.15);
+    animation: petal-fall var(--dur, 10s) linear var(--delay, 0s) infinite;
+  }
+  @keyframes petal-fall {
+    0%   { transform: translate3d(0, -6vh, 0) rotate(0deg); opacity: 0; }
+    8%   { opacity: .9; }
+    25%  { transform: translate3d(26px, 24vh, 0) rotate(96deg); opacity: .9; }
+    50%  { transform: translate3d(-20px, 50vh, 0) rotate(190deg); opacity: .85; }
+    75%  { transform: translate3d(24px, 76vh, 0) rotate(286deg); opacity: .7; }
+    100% { transform: translate3d(-12px, 108vh, 0) rotate(360deg); opacity: 0; }
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 720px; margin: 0 auto; padding: 34px 20px 80px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .brand-link {
+    font-size: 26px; font-weight: 700; color: #e85f8d; letter-spacing: 1px; text-decoration: none;
+    text-shadow: 0 0 18px rgba(242,109,157,.35), 0 0 34px rgba(255,179,209,.35);
+  }
+  .brand-link:hover { text-shadow: 0 0 22px rgba(242,109,157,.5), 0 0 40px rgba(255,179,209,.5); }
+  .nav-link { font-size: 13px; color: var(--sub); text-decoration: none; }
+  .nav-link:hover { color: var(--accent); }
+  .nav-link.active { color: var(--accent); font-weight: 600; }
+  .gh-link { color: var(--sub); display: inline-flex; align-items: center; text-decoration: none; transition: color .2s; }
+  .gh-link:hover { color: var(--accent); }
+  .autharea { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  button { padding: 9px 16px; border-radius: 999px; border: none;
+    background: linear-gradient(135deg, var(--accent-soft), var(--accent)); color: #fff;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(242,109,157,.28);
+    transition: transform .18s, box-shadow .18s; font-family: inherit; }
+  button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(242,109,157,.4); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.sec { background: rgba(255,255,255,.75); border: 1px solid rgba(242,109,157,.28); color: var(--accent); box-shadow: none; }
+  #userlabel { color: var(--sub); font-size: 13px; }
+
+  .searchbar { margin-bottom: 14px; }
+  .searchbar input {
+    width: 100%; padding: 12px 18px; border-radius: 999px;
+    border: 1px solid rgba(242,109,157,.25); background: rgba(255,255,255,.85);
+    font-size: 15px; color: var(--text); outline: none; font-family: inherit;
+    box-shadow: 0 2px 10px rgba(242,109,157,.1);
+  }
+  .searchbar input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(242,109,157,.15); }
+
+  .meta { color: var(--sub); font-size: 14px; margin-bottom: 12px; min-height: 20px; }
+  .err { color: #e85f8d; font-size: 14px; margin-bottom: 12px; }
+  .login-hint { font-size: 13px; color: var(--sub); margin-bottom: 12px; text-align: center; }
+  .login-hint a { color: var(--accent); }
+
+  .card {
+    display: flex; align-items: stretch; gap: 14px;
+    background: var(--card); border: 1px solid rgba(255,255,255,.65);
+    border-radius: 16px; padding: 12px 16px; margin-bottom: 10px;
+    box-shadow: 0 4px 16px rgba(242,109,157,.08);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    transition: transform .18s, box-shadow .18s, opacity .18s;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(242,109,157,.16); }
+  .card.busy { opacity: .55; pointer-events: none; }
+  .card-body { flex: 1; min-width: 0; }
+  .cover { width: 48px; height: 66px; object-fit: cover; border-radius: 8px;
+    background: #ffe9f2; flex-shrink: 0; box-shadow: 0 2px 8px rgba(242,109,157,.18); }
+  .name-cn { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name-ja { font-size: 13px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .meta-row { display: flex; align-items: center; gap: 6px; margin-top: 3px; flex-wrap: wrap; }
+  .rating { font-size: 13px; font-weight: 700; color: #f5a623; background: rgba(245,166,35,.08);
+    padding: 1px 6px; border-radius: 99px; }
+  .date { font-size: 12px; color: var(--sub); }
+  .nsfw-tag { font-size: 10px; font-weight: 700; color: #fff; background: #b76ae0; padding: 1px 6px; border-radius: 99px; }
+  .state-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
+  .state--watching { color: #e85f8d; background: rgba(232,95,141,.12); }
+  .state--watched { color: #7c8fa6; background: rgba(124,143,166,.14); }
+  .state--want { color: #4d96ff; background: rgba(77,150,255,.12); }
+  .state--hold { color: #e8a87c; background: rgba(232,168,124,.16); }
+  .state--dropped { color: #9aa0a6; background: rgba(154,160,166,.14); }
+
+  /* 10 星控件（BGM 式）：悬浮第 k 颗高亮 1..k + 数字气泡，点击即打 */
+  .stars { display: flex; align-items: center; gap: 2px; margin-top: 7px; min-height: 20px; flex-wrap: wrap; }
+  .star { font-size: 17px; color: #e3c4d2; cursor: pointer; line-height: 1;
+    transition: transform .12s, color .12s, text-shadow .12s; user-select: none; }
+  .star:hover { transform: scale(1.25); }
+  .star.on { color: #f5a623; text-shadow: 0 0 6px rgba(245,166,35,.45); }
+  .star-num { min-width: 18px; font-size: 12px; font-weight: 700; color: var(--accent); margin-left: 4px; text-align: center; }
+  .rated-badge { font-size: 11px; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg, var(--accent-soft), var(--accent));
+    padding: 2px 9px; border-radius: 99px; margin-left: 6px; }
+  .clear-btn { font-size: 11px; font-weight: 600; padding: 2px 9px; margin-left: 6px;
+    border-radius: 99px; border: 1px solid rgba(242,109,157,.28);
+    background: rgba(255,255,255,.7); color: var(--sub); cursor: pointer; font-family: inherit; }
+  .clear-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: rgba(255,179,209,.2); }
+
+  .empty { text-align: center; color: var(--sub); padding: 28px 0; font-size: 15px; }
+  .hidden { display: none; }
+  .footer { padding: 10px 2px 16px; text-align: center; font-size: 13px; color: var(--sub); }
+  .footer a { color: var(--accent); text-decoration: none; }
+  @media (max-width: 480px) {
+    .wrap { padding: 24px 14px 60px; }
+    .brand-link { font-size: 22px; }
+    .card { padding: 10px 12px; }
+    .name-cn { font-size: 15px; }
+    .star { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div class="petals" id="petals" aria-hidden="true"></div>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">
+      <a class="brand-link" href="/" title="返回主页">🌸 bgmLikes</a>
+      <a class="nav-link" href="/likes">🎯 推荐系统</a>
+      <a class="nav-link" href="/daily">📺 每日放送</a>
+      <a class="nav-link active" href="/rate">⭐ 打分</a>
+    </div>
+    <div id="autharea" class="autharea">
+      <button id="loginbtn" class="sec hidden">登录 (Bangumi)</button>
+      <span id="userlabel" class="hidden"></span>
+      <button id="logoutbtn" class="sec hidden">退出</button>
+      <a class="gh-link" href="https://github.com/ighwayh-star/bgmlikes" target="_blank" rel="noopener" title="项目源码 GitHub">
+        <svg viewBox="0 0 16 16" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+    </div>
+  </div>
+
+  <div id="meta" class="meta"></div>
+  <div id="loginHint" class="login-hint hidden">登录后可按 <a href="https://bgm.tv" target="_blank" rel="noopener">Bangumi</a> 样式快速打分（点击即标记"看过"）</div>
+  <div class="searchbar hidden" id="searchbox">
+    <input id="searchInput" type="search" placeholder="🔍 搜索动画（中文 / 日文 / 英文名）" autocomplete="off" spellcheck="false">
+  </div>
+  <div id="err" class="err hidden"></div>
+  <div id="content"></div>
+  <div class="footer">数据来源 <a href="https://bgm.tv" target="_blank" rel="noopener">Bangumi</a> · 打分写到你自己的 BGM 账号</div>
+</div>
+
+<script>
+'use strict';
+
+// ---- 元素 & 状态 ----
+const loginBtn = document.getElementById('loginbtn');
+const logoutBtn = document.getElementById('logoutbtn');
+const userLabel = document.getElementById('userlabel');
+const meta = document.getElementById('meta');
+const err = document.getElementById('err');
+const content = document.getElementById('content');
+const loginHint = document.getElementById('loginHint');
+const searchBox = document.getElementById('searchbox');
+const searchInput = document.getElementById('searchInput');
+
+let loggedIn = false;
+let loadedOnce = false;          // 首次登录后只启动一次列表加载
+let rateMap = new Map();         // subject_id -> {state, rate}（客户端状态唯一来源，overlay 装饰）
+let currentQuery = '';           // '' = 热门列表
+let abortCtrl = null;            // 搜索 AbortController（防抖/清空时打断在途请求）
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ---- 登录态 ----
+async function refreshAuth() {
+  try {
+    const r = await fetch('/auth/me');
+    const d = await r.json();
+    loggedIn = !!d.logged_in;
+    if (loggedIn) {
+      userLabel.textContent = d.username;
+      userLabel.classList.remove('hidden');
+      loginBtn.classList.add('hidden');
+      logoutBtn.classList.remove('hidden');
+      loginHint.classList.add('hidden');
+      searchBox.classList.remove('hidden');
+      if (!loadedOnce) {
+        loadedOnce = true;
+        showPopular();
+        loadCollected();  // 并行：列表先渲染，收藏回来 overlay 补星
+      }
+    } else {
+      rateMap = new Map();
+      userLabel.classList.add('hidden');
+      logoutBtn.classList.add('hidden');
+      loginBtn.classList.remove('hidden');
+      loginHint.classList.remove('hidden');
+      searchBox.classList.add('hidden');
+      content.innerHTML = '<div class="empty">登录后即可打分</div>';
+    }
+  } catch (e) {
+    loggedIn = false;
+    loginBtn.classList.remove('hidden');
+    loginHint.classList.remove('hidden');
+    searchBox.classList.add('hidden');
+  }
+}
+
+// ---- 列表渲染 ----
+function renderCards(items, emptyMsg) {
+  if (!items.length) {
+    content.innerHTML = '<div class="empty">' + emptyMsg + '</div>';
+    return;
+  }
+  content.innerHTML = items.map(cardHTML).join('');
+  items.forEach(it => decorateCard(
+    content.querySelector('.card[data-id="' + it.subject_id + '"]'), it.subject_id));
+}
+
+function cardHTML(it) {
+  const cn = it.name_cn || it.name || '';
+  const ja = it.name || '';
+  const score = it.score ? Number(it.score).toFixed(1) : '';
+  const date = it.date || '';
+  let h = '<div class="card" data-id="' + it.subject_id + '">' +
+    '<img class="cover" src="/img/' + it.subject_id + '" loading="lazy" alt="" onerror="this.remove()">' +
+    '<div class="card-body">' +
+      '<div class="name-cn">' + escapeHtml(cn) + '</div>' +
+      (ja && ja !== cn ? '<div class="name-ja">' + escapeHtml(ja) + '</div>' : '') +
+      '<div class="meta-row">' +
+        (score ? '<span class="rating">⭐ ' + score + '</span>' : '') +
+        (date ? '<span class="date">' + escapeHtml(date) + '</span>' : '') +
+        '<span class="state-tag hidden"></span>' +
+        (it.nsfw ? '<span class="nsfw-tag">NSFW</span>' : '') +
+      '</div>' +
+      '<div class="stars" data-sid="' + it.subject_id + '">';
+  for (let i = 1; i <= 10; i++) h += '<span class="star" data-v="' + i + '">★</span>';
+  h += '<span class="star-num"></span>' +
+       '<span class="rated-badge hidden"></span>' +
+       '<button class="clear-btn hidden" title="清除收藏与评分">✕ 清除</button>' +
+    '</div>' +
+  '</div></div>';
+  return h;
+}
+
+const STATE_CLS = { '在看':'watching', '看过':'watched', '想看':'want', '搁置':'hold', '抛弃':'dropped' };
+
+// 用 rateMap 装饰一张卡片（星形填满 + 徽标 + 清除按钮 + 状态标签）
+function decorateCard(card, sid) {
+  if (!card) return;
+  const row = card.querySelector('.stars');
+  const cur = rateMap.get(sid);
+  const v = cur ? cur.rate : 0;
+  fillStars(row, v);
+  setNum(row, '');
+  const badge = card.querySelector('.rated-badge');
+  const clearBtn = card.querySelector('.clear-btn');
+  const stateTag = card.querySelector('.state-tag');
+  if (cur && cur.rate > 0) {
+    badge.textContent = '看过 ' + cur.rate + '分';
+    badge.classList.remove('hidden');
+    clearBtn.classList.remove('hidden');
+    stateTag.classList.add('hidden');
+  } else {
+    badge.classList.add('hidden');
+    clearBtn.classList.add('hidden');
+    if (cur && cur.state) {
+      stateTag.textContent = cur.state;
+      stateTag.className = 'state-tag state--' + (STATE_CLS[cur.state] || 'other');
+    } else {
+      stateTag.classList.add('hidden');
+    }
+  }
+}
+
+function fillStars(row, v) {
+  if (!row) return;
+  row.querySelectorAll('.star').forEach(s => {
+    s.classList.toggle('on', Number(s.dataset.v) <= v);
+  });
+}
+function setNum(row, text) {
+  if (!row) return;
+  const n = row.querySelector('.star-num');
+  if (n) n.textContent = text;
+}
+
+// ---- 热门列表（未搜索时）----
+async function showPopular() {
+  meta.textContent = '加载热门…';
+  err.classList.add('hidden');
+  try {
+    const r = await fetch('/api/rate/popular?limit=50');
+    if (r.status === 401) { await refreshAuth(); return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    meta.textContent = '';
+    renderCards(d.data || [], '暂无热门动画');
+  } catch (e) {
+    err.classList.remove('hidden');
+    err.textContent = '加载失败：' + (e.message || e) + '，请重试';
+    meta.textContent = '';
+  }
+}
+
+// ---- 搜索（防抖 + AbortController）----
+async function doSearch(q) {
+  currentQuery = q;
+  if (abortCtrl) abortCtrl.abort();
+  abortCtrl = new AbortController();
+  meta.textContent = '搜索中…';
+  err.classList.add('hidden');
+  try {
+    const r = await fetch('/api/rate/search?q=' + encodeURIComponent(q) + '&limit=20',
+                          {signal: abortCtrl.signal});
+    if (r.status === 401) { await refreshAuth(); return; }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    meta.textContent = '';
+    renderCards(d.data || [], '没有找到相关动画');
+  } catch (e) {
+    if (e.name === 'AbortError') return;  // 被新的搜索/清空打断，忽略
+    err.classList.remove('hidden');
+    err.textContent = '搜索失败：' + (e.message || e) + '，请重试';
+    meta.textContent = '';
+  }
+}
+
+let debounceTimer = null;
+searchInput.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  const q = searchInput.value.trim();
+  if (!q) {
+    if (abortCtrl) abortCtrl.abort();
+    currentQuery = '';
+    meta.textContent = '';
+    showPopular();
+    return;
+  }
+  debounceTimer = setTimeout(() => doSearch(q), 250);
+});
+
+// ---- 收藏 overlay（拉一次，装饰所有卡片）----
+async function loadCollected() {
+  try {
+    const r = await fetch('/api/rate/collections');
+    if (r.status === 401 || !r.ok) return;
+    const d = await r.json();
+    rateMap = new Map();
+    (d.items || []).forEach(it => rateMap.set(it.subject_id, {state: it.state, rate: it.rate}));
+    if (d.profile_nsfw && !currentQuery) {
+      showPopular();  // 用户有 nsfw 口味：热门列表需含 nsfw 项，重拉
+    } else {
+      content.querySelectorAll('.card').forEach(c => decorateCard(c, Number(c.dataset.id)));
+    }
+  } catch (e) { /* overlay 失败降级空星，不影响列表 */ }
+}
+
+// ---- 打分 / 清除 ----
+function setBusy(sid, busy) {
+  const card = content.querySelector('.card[data-id="' + sid + '"]');
+  if (card) card.classList.toggle('busy', busy);
+}
+
+async function rate(sid, value) {
+  setBusy(sid, true);
+  try {
+    const r = await fetch('/api/rate/' + sid, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rate: value}),
+    });
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('评分失败（' + r.status + '），请重试'); return; }
+    rateMap.set(sid, {state: '看过', rate: value});
+    decorateCard(content.querySelector('.card[data-id="' + sid + '"]'), sid);
+  } catch (e) { alert('网络错误，请重试'); }
+  finally { setBusy(sid, false); }
+}
+
+async function clearRate(sid) {
+  setBusy(sid, true);
+  try {
+    const r = await fetch('/api/rate/' + sid, {method: 'DELETE'});
+    if (r.status === 401) { await refreshAuth(); alert('登录已过期，请重新登录'); return; }
+    if (!r.ok) { alert('清除失败（' + r.status + '），请重试'); return; }
+    rateMap.delete(sid);
+    decorateCard(content.querySelector('.card[data-id="' + sid + '"]'), sid);
+  } catch (e) { alert('网络错误，请重试'); }
+  finally { setBusy(sid, false); }
+}
+
+// ---- 事件委托（hover 预览 + 点击打分）----
+content.addEventListener('mouseover', (e) => {
+  const star = e.target.closest('.star');
+  if (!star) return;
+  const row = star.closest('.stars');
+  fillStars(row, Number(star.dataset.v));
+  setNum(row, star.dataset.v);
+});
+content.addEventListener('mouseout', (e) => {
+  const row = e.target.closest('.stars');
+  if (!row) return;
+  if (e.relatedTarget && row.contains(e.relatedTarget)) return;  // 仍在行内移动
+  const sid = Number(row.dataset.sid);
+  const cur = rateMap.get(sid);
+  fillStars(row, cur ? cur.rate : 0);
+  setNum(row, '');
+});
+content.addEventListener('click', (e) => {
+  const clearBtn = e.target.closest('.clear-btn');
+  if (clearBtn) { e.stopPropagation(); clearRate(Number(clearBtn.closest('.stars').dataset.sid)); return; }
+  const star = e.target.closest('.star');
+  if (!star) return;
+  e.stopPropagation();
+  const sid = Number(star.closest('.stars').dataset.sid);
+  const v = Number(star.dataset.v);
+  const cur = rateMap.get(sid);
+  if (cur && cur.rate === v) { clearRate(sid); return; }  // 点击当前分再点 → 清除
+  rate(sid, v);
+});
+
+// ---- 登录/退出 ----
+loginBtn.addEventListener('click', () => { window.location = '/auth/login'; });
+logoutBtn.addEventListener('click', async () => {
+  try { await fetch('/auth/logout', {method:'POST'}); } catch (e) {}
+  window.location.reload();
+});
+
+// ---- 启动 ----
+refreshAuth();
+(function () {
+  const el = document.getElementById('petals');
+  if (!el) return;
+  for (let i = 0; i < 20; i++) {
+    const p = document.createElement('span');
+    p.className = 'petal';
+    const dur = (7 + Math.random() * 6).toFixed(2);
+    const size = (10 + Math.random() * 9).toFixed(1);
+    p.style.cssText = 'left:' + (Math.random() * 100).toFixed(2) + '%;' +
+      '--size:' + size + 'px;--dur:' + dur + 's;--delay:-' + (Math.random() * dur).toFixed(2) + 's;';
+    el.appendChild(p);
+  }
+})();
+</script>
+</body>
+</html>
