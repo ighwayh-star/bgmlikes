@@ -65,6 +65,11 @@ recs = [{"subject_id": 1001, "name": "日常一", "rating": 7.5, "popularity_ran
 recs_long = [{"subject_id": 2000 + i, "name": f"滚动动画 {i}", "rating": 7.5, "popularity_rank": 100}
              for i in range(40)]
 RECS_LIST = recs  # /v1/recommend 返回的列表（滚动测试时换成 recs_long）
+# 打分页热门列表（1001 在 collections 里 rate 8）
+popular = [
+    {"subject_id": 1001, "name": "Anime One", "name_cn": "日常一", "score": 7.5, "date": "2026-04-01"},
+    {"subject_id": 1004, "name": "Anime Three", "name_cn": "季番三", "score": 9.1, "date": "2026-04-05"},
+]
 
 patched = []   # (sid, rate)
 deleted = []   # [sid]
@@ -86,7 +91,7 @@ async def handler(route):
         if p == "/api/rate/collections":
             return await route.fulfill(json=collections)
         if p == "/api/rate/popular":
-            return await route.fulfill(json={"data": []})
+            return await route.fulfill(json={"data": popular})
         if p == "/api/rate/search":
             return await route.fulfill(json={"data": []})
         if p.startswith("/api/subject/"):
@@ -169,6 +174,18 @@ async def run_index(browser, logged_in):
     check("index modal opens with title", title and "Anime One" in title)
     summary = await page.text_content(".modal .modal-summary")
     check("index modal summary shown", summary and "剧情简介" in summary)
+    # 浮窗 BGM/B站 跳转按钮
+    mbgm = await page.query_selector(".modal .modal-link-bgm")
+    mbili = await page.query_selector(".modal .modal-link-bili")
+    check("index modal has BGM jump btn", mbgm is not None)
+    check("index modal has Bili jump btn", mbili is not None)
+    if mbgm:
+        href = await mbgm.get_attribute("href")
+        check("index modal BGM href is subject url",
+              re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+    if mbili:
+        href = await mbili.get_attribute("href")
+        check("index modal Bili href has keyword", href and "keyword=" in href, href or "")
 
     if logged_in:
         stars = await page.query_selector_all(".modal .stars .star")
@@ -306,6 +323,17 @@ async def run_daily(browser, logged_in):
     await page.wait_for_selector(".modal .modal-title", timeout=10000)
     title = await page.text_content(".modal .modal-title")
     check("daily card opens modal (not new tab)", title is not None)
+    mbgm = await page.query_selector(".modal .modal-link-bgm")
+    mbili = await page.query_selector(".modal .modal-link-bili")
+    check("daily modal has BGM jump btn", mbgm is not None)
+    check("daily modal has Bili jump btn", mbili is not None)
+    if mbgm:
+        href = await mbgm.get_attribute("href")
+        check("daily modal BGM href is subject url",
+              re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+    if mbili:
+        href = await mbili.get_attribute("href")
+        check("daily modal Bili href has keyword", href and "keyword=" in href, href or "")
     if logged_in:
         await page.wait_for_selector(".modal .stars", timeout=3000)
         check("daily modal stars row present", True)
@@ -363,6 +391,67 @@ async def run_daily(browser, logged_in):
     await ctx.close()
 
 
+async def run_rate(browser):
+    """打分页：卡片 BGM/B站 外链 + 点击卡片 → 简介浮窗（含跳转按钮 + 星形预填）。"""
+    Logged.state = True
+    patched.clear(); deleted.clear()
+    ctx = await browser.new_context(viewport={"width": 900, "height": 800})
+    await ctx.route(re.compile(r".*"), handler)
+    page = await ctx.new_page()
+    await page.add_init_script("window.__alerts=[];window.alert=function(m){window.__alerts.push(String(m));};")
+    await page.goto(BASE + "/rate.html")
+    await page.wait_for_selector(".card", timeout=10000)
+
+    card = await page.query_selector(".card")
+    bgm = await card.query_selector(".link-bgm")
+    bili = await card.query_selector(".link-bili")
+    check("rate card has BGM link", bgm is not None)
+    check("rate card has Bili link", bili is not None)
+    if bgm:
+        href = await bgm.get_attribute("href")
+        check("rate card BGM href is subject url",
+              re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+    if bili:
+        href = await bili.get_attribute("href")
+        check("rate card Bili href has keyword", href and "keyword=" in href, href or "")
+
+    # 点击卡片（非星/外链）→ 简介浮窗
+    await page.click(".card .name-cn")
+    await page.wait_for_selector(".modal .modal-title", timeout=10000)
+    title = await page.text_content(".modal .modal-title")
+    check("rate card opens modal with title", title and "Anime One" in title, title or "")
+    mbgm = await page.query_selector(".modal .modal-link-bgm")
+    mbili = await page.query_selector(".modal .modal-link-bili")
+    check("rate modal has BGM jump btn", mbgm is not None)
+    check("rate modal has Bili jump btn", mbili is not None)
+    if mbgm:
+        href = await mbgm.get_attribute("href")
+        check("rate modal BGM href is subject url",
+              re.match(r"^https://bgm\.tv/subject/\d+$", href or "") is not None, href or "")
+    if mbili:
+        href = await mbili.get_attribute("href")
+        check("rate modal Bili href has keyword", href and "keyword=" in href, href or "")
+    # 浮窗星形从 rateMap 预填（1001 在 collections rate 8）
+    await page.wait_for_selector(".modal .stars .star.on[data-v='8']", timeout=3000)
+    badge = await page.text_content(".modal .rated-badge")
+    check("rate modal stars prefilled (rate 8)", badge and "看过 8分" in badge, badge or "")
+
+    # 关闭浮窗
+    await page.click(".modal-close")
+    await page.wait_for_timeout(150)
+    vis = await page.evaluate("getComputedStyle(document.getElementById('modal')).display")
+    check("rate modal closes via ✕", vis == "none")
+
+    # 点星打分不打浮窗（打分仍走卡片行内）
+    await page.click('.card .star[data-v="5"]')
+    await page.wait_for_timeout(300)
+    check("rate star click rates (no modal)", (1001, 5) in patched)
+    vis = await page.evaluate("getComputedStyle(document.getElementById('modal')).display")
+    check("rate star click does not open modal", vis == "none")
+
+    await ctx.close()
+
+
 async def main():
     async with async_playwright() as p:
         try:
@@ -375,6 +464,7 @@ async def main():
             await run_index_scroll(browser)
             await run_daily(browser, True)
             await run_daily(browser, False)
+            await run_rate(browser)
         finally:
             await browser.close()
     ok = all(results)

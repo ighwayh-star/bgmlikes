@@ -194,6 +194,20 @@
     border-radius: 999px; background: rgba(242,109,157,.1); color: var(--accent);
     border: 1px solid rgba(242,109,157,.22);
   }
+  /* 浮窗跳转按钮：在 Bangumi 打开条目 / 在 Bilibili 搜索（2026-08-19） */
+  .modal-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .modal-link {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 5px 13px; border-radius: 999px;
+    border: 1px solid transparent; text-decoration: none;
+    font-size: 12.5px; font-weight: 600; cursor: pointer;
+    transition: transform .15s, background .15s, border-color .15s;
+  }
+  .modal-link:hover { transform: translateY(-1px); }
+  .modal-link-bgm { color: #4a56c8; background: rgba(124,140,248,.12); border-color: rgba(124,140,248,.35); }
+  .modal-link-bgm:hover { background: rgba(124,140,248,.22); }
+  .modal-link-bili { color: #e0557d; background: rgba(251,114,153,.12); border-color: rgba(251,114,153,.35); }
+  .modal-link-bili:hover { background: rgba(251,114,153,.22); }
   .modal-section { font-size: 13px; color: var(--sub); font-weight: 700; margin: 16px 0 8px; }
   .modal-summary { font-family: "SimHei","Heiti SC","Microsoft YaHei","PingFang SC",sans-serif; font-size: 15px; line-height: 1.75; color: var(--text); white-space: pre-line; word-break: break-word; }
   .similar-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
@@ -914,7 +928,11 @@ function renderModal(d) {
       <div><div class="modal-title">${escapeHtml(d.name || '')}</div>
       ${d.rating ? '<div class="modal-rating">⭐ ' + d.rating.toFixed(1) + '</div>' : ''}
       ${d.date ? '<div class="modal-date">' + escapeHtml(d.date) + '</div>' : ''}
-      ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}</div>
+      ${(d.tags || []).map(t => '<span class="modal-tag">' + escapeHtml(t) + '</span>').join('')}
+      <div class="modal-actions">
+        <a class="modal-link modal-link-bgm" href="https://bgm.tv/subject/${d.subject_id}" target="_blank" rel="noopener" title="在 Bangumi 查看条目">Bangumi</a>
+        <a class="modal-link modal-link-bili" href="https://search.bilibili.com/all?keyword=${encodeURIComponent(d.name_cn || d.name || '')}" target="_blank" rel="noopener" title="在 Bilibili 搜索该动画">B站</a>
+      </div></div>
     </div>
     ${modalStarsHtml(d.subject_id)}
     <div class="modal-section">简介</div>
