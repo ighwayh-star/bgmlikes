@@ -61,6 +61,10 @@ collections = {"items": [{"subject_id": 1001, "state": "看过", "rate": 8},
                          {"subject_id": 1003, "state": "在看", "rate": 0}],
                "profile_nsfw": False}
 recs = [{"subject_id": 1001, "name": "日常一", "rating": 7.5, "popularity_rank": 100}]
+# 无限滚动测试用长池（40 部，模拟推荐池）
+recs_long = [{"subject_id": 2000 + i, "name": f"滚动动画 {i}", "rating": 7.5, "popularity_rank": 100}
+             for i in range(40)]
+RECS_LIST = recs  # /v1/recommend 返回的列表（滚动测试时换成 recs_long）
 
 patched = []   # (sid, rate)
 deleted = []   # [sid]
@@ -114,7 +118,7 @@ async def handler(route):
         if p == "/daily/collected":
             return await route.fulfill(json={"items": [{"id": 1001, "state": "看过"}]})
         if p == "/v1/recommend":
-            return await route.fulfill(json={"username": "test", "normal": recs, "source": "cache"})
+            return await route.fulfill(json={"username": "test", "normal": RECS_LIST, "source": "cache"})
         rel = p.lstrip("/")
         f = os.path.join(WEB_DIR, rel)
         if os.path.isfile(f):
@@ -226,6 +230,39 @@ async def run_index(browser, logged_in):
     await ctx.close()
 
 
+async def run_index_scroll(browser):
+    """推荐页新 UI：三列网格 + 无限滚动渐进加载（池上限 50）+ 标题左上角。"""
+    global RECS_LIST
+    RECS_LIST = recs_long
+    ctx = await browser.new_context(viewport={"width": 1100, "height": 800})
+    await ctx.route(re.compile(r".*"), handler)
+    page = await ctx.new_page()
+    await page.add_init_script("window.__alerts=[];window.alert=function(m){window.__alerts.push(String(m));};")
+    await page.goto(BASE + "/index.html")
+    await page.fill("#q", "testuser")
+    await page.click("#go")
+    await page.wait_for_selector(".card", timeout=10000)
+
+    grid = await page.evaluate("getComputedStyle(document.getElementById('list')).gridTemplateColumns")
+    check("index list is 3-column grid", len(grid.split()) == 3, grid)
+    n0 = len(await page.query_selector_all(".card"))
+    check("index initial batch = 15 cards", n0 == 15, str(n0))
+
+    # 逐次滚到底触发哨兵 → 池内渐进加载，直到全部（40）展示
+    for _ in range(8):
+        await page.evaluate(
+            "document.getElementById('list-sentinel').scrollIntoView({behavior:'instant',block:'end'})")
+        await page.wait_for_timeout(250)
+    n = len(await page.query_selector_all(".card"))
+    check("index scroll loads full pool (40)", n == 40, str(n))
+
+    # 标题在页面左上角：topbar 通栏，左缘贴近视口
+    box = await page.evaluate("document.querySelector('.topbar').getBoundingClientRect().left")
+    check("index topbar title at top-left", box < 8, str(box))
+    await ctx.close()
+    RECS_LIST = recs
+
+
 async def run_daily(browser, logged_in):
     Logged.state = logged_in
     patched.clear(); deleted.clear()
@@ -312,6 +349,7 @@ async def main():
         try:
             await run_index(browser, True)
             await run_index(browser, False)
+            await run_index_scroll(browser)
             await run_daily(browser, True)
             await run_daily(browser, False)
         finally:
