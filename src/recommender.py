@@ -15,12 +15,34 @@ import math
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import scipy.sparse as sp
 
 from src.bangumi_api import CollectionEntry
+
+
+RECENCY_FLOOR = 0.5
+RECENCY_DECAY_DAYS = 730.0
+
+
+def _recency_weight(updated_at: str, *, now: datetime | None = None) -> float:
+    """Gently discount old profile ratings; malformed/missing dates get floor weight."""
+    if not updated_at:
+        return RECENCY_FLOOR
+    try:
+        rated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return RECENCY_FLOOR
+    if rated_at.tzinfo is None:
+        rated_at = rated_at.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    age_days = max(0.0, (current - rated_at).total_seconds() / 86400.0)
+    return RECENCY_FLOOR + (1.0 - RECENCY_FLOOR) * math.exp(-age_days / RECENCY_DECAY_DAYS)
 
 
 @dataclass(frozen=True)
@@ -688,7 +710,10 @@ class Recommender:
             [e.subject_id for e in taste],
             self._iidx,
             self._idf,
-            weights=[float(e.rate) - self._rate_center for e in taste],
+            weights=[
+                (float(e.rate) - self._rate_center) * _recency_weight(e.updated_at)
+                for e in taste
+            ],
         )
 
         scores = score_items(
