@@ -332,6 +332,9 @@ class Recommender:
         era_gap_beta: float = 0.0,     # 2026-08-18 年份差 boost（正确算法版，替代年份门控）：>0 时对池内候选加 λ×scale×cos_i×f(|year_i − anchor|)，anchor = 相似用户（sim 加权）的平均观看年份，逐用户自适应。无全局年份常量、天然对称：新口味邻居锚点新→救老题材；老口味邻居锚点老→救新题材（老口味用户新番概率不再被全局门压低）。tag_cos 做相关度守门，非硬塞
         era_gap_year_span: float = 50.0,  # 年份差权重 f 的饱和跨度：Δ=year_span 时 f=1（.env ERA_GAP_YEAR_SPAN 可调）
         era_gap_shape: str = "log",    # 年份差权重形状：'log'=log1p(Δ)/log1p(span) 对数饱和（推荐，对称性好）；'lin'=Δ/span 线性 clip
+        item_cooccur_beta: float = 0.0, # 正向评分作品共现补分；0=关闭
+        slate_calibration_beta: float = 0.0,  # 对称列表校准强度；0=关闭
+        slate_calibration_center_year: float = 2014.0,  # 校准对称中心年
         similar_alpha: float = 0.5,    # 相似动画混合系数：α×标签余弦 + (1−α)×共同观看余弦（浮窗"相似"用，.env SIMILAR_ALPHA 可调）
         site_blocked: set[int] | frozenset[int] = frozenset(),  # 站点级永久屏蔽：推荐/相似候选一律排除（2026-08-19）
         hot_rank_threshold: int = 500,  # "高热度"＝全局热度排名 < 该值
@@ -353,6 +356,9 @@ class Recommender:
         self._old_tag_beta = old_tag_beta
         self._old_tag_year = old_tag_year
         self._era_gap_beta = era_gap_beta
+        self._item_cooccur_beta = item_cooccur_beta
+        self._slate_calibration_beta = slate_calibration_beta
+        self._slate_calibration_center_year = slate_calibration_center_year
         self._era_gap_year_span = era_gap_year_span
         self._era_gap_shape = era_gap_shape
         self._similar_alpha = similar_alpha
@@ -511,6 +517,20 @@ class Recommender:
         # 转置缓存（浮窗相似动画用）：CSR.T → CSC 共享 data、近零拷贝。_A 构建后不可变，
         # 供 co-watch 余弦一次 matvec（_A_T @ col），避免每次重算转置。
         self._A_T = self._A.T
+
+        # 正向作品共现（rate >= 6）：构造二值稀疏矩阵，避免物化 item×item 全矩阵。
+        positive = raw >= 6
+        self._positive_items = sp.csr_matrix(
+            (np.ones(int(positive.sum()), dtype=np.float32),
+             (_ui_arr[positive], _ii_arr[positive])),
+            shape=(uid, n_items), dtype=np.float32,
+        )
+        self._positive_items.sum_duplicates()
+        self._positive_items.data[:] = 1.0
+        self._positive_items_T = self._positive_items.T.tocsr()
+        self._positive_item_norm = np.sqrt(
+            np.asarray(self._positive_items.getnnz(axis=0)).ravel()
+        )
 
         # 每部动画的语料收藏人数（渗透率归一化分母，自适应 γ 用）：按训练对 bincount 计看过人数
         # （不看评分值——中心化后 rate=5 的条目权重为 0，若按 A 非零行计会漏掉实际看过的人）。
@@ -722,6 +742,41 @@ class Recommender:
             knn=self._knn,
         )
 
+        # 与 600 用户离线实验的 item_blend 一致。将高分共现信号混入原始 CF 分数，
+        # 再由下方现有 (df+1)^gamma 归一化；乘回 (df+1) 使其在 gamma=1 时
+        # 体现为 beta × CF 基准尺度 × 共现亲和度，不构造 item-item 全矩阵。
+        if self._item_cooccur_beta > 0 and (q != 0).sum() >= self._min_profile:
+            seeds = np.maximum(q, 0.0)
+            seed_total = float(seeds.sum())
+            if seed_total > 1e-12:
+                weighted = np.divide(
+                    seeds / seed_total,
+                    self._positive_item_norm,
+                    out=np.zeros_like(seeds),
+                    where=self._positive_item_norm > 0,
+                )
+                affinity = np.asarray(
+                    self._positive_items_T @ (self._positive_items @ weighted)
+                ).ravel()
+                affinity = np.divide(
+                    affinity,
+                    self._positive_item_norm,
+                    out=np.zeros_like(affinity),
+                    where=self._positive_item_norm > 0,
+                )
+                rank_pool = self._pop_rank <= self._rank_cap
+                positive_affinity = affinity[rank_pool & (affinity > 0)]
+                if positive_affinity.size:
+                    affinity_scale = float(np.percentile(positive_affinity, 90))
+                    base_scale = float(np.percentile(
+                        (scores / (self._df + 1))[rank_pool], 90,
+                    ))
+                    if affinity_scale > 1e-12 and base_scale > 0:
+                        extra = self._item_cooccur_beta * base_scale * np.clip(
+                            affinity / affinity_scale, 0.0, 3.0,
+                        )
+                        scores += extra * (self._df + 1)
+
         # 排除用户收藏过（任意状态：看过/在看/想看）的 franchise：该系列的续作/剧场版
         # 都不进候选。2026-08-07 要求"已看续作别推"；2026-08-11 升级为"收藏过任一部即
         # 排除整系列"，覆盖看过未打分、在看、想看等状态（无职转生 Part 2 一类漏网不再出现）。
@@ -794,7 +849,33 @@ class Recommender:
                         w = np.clip(dy / max(self._era_gap_year_span, 1e-9), 0.0, 1.0)
                     boost += self._era_gap_beta * w * cos_pool
             scores[pidx] += max(scale, 1e-9) * boost
-        top = sorted(pool, key=lambda i: -scores[i])[:k]
+        # 对称列表校准：只重排原 CF 排名前 500 的候选，保持候选召回池不变。
+        # 用户档案年份在中心年一侧时，适度提升中心另一侧作品；两侧完全对称。
+        # 公式/尺度与本地确认实验一致。score 字段仍保留原始模型分，校准只决定顺序。
+        candidate_limit = max(500, k) if self._slate_calibration_beta > 0 else k
+        top = sorted(pool, key=lambda i: -scores[i])[:candidate_limit]
+        if self._slate_calibration_beta > 0 and top:
+            profile_years = [
+                int(self._item_year[self._iidx[e.subject_id]])
+                for e in profile
+                if e.subject_id in self._iidx
+                and int(self._item_year[self._iidx[e.subject_id]]) > 0
+            ]
+            if profile_years:
+                profile_year = float(np.mean(profile_years))
+                center = self._slate_calibration_center_year
+                scale = float(np.percentile(np.abs(scores[top]), 90))
+                if scale > 1e-12:
+                    def calibrated_score(i: int) -> float:
+                        year = int(self._item_year[i])
+                        if year <= 0:
+                            return float(scores[i])
+                        cross = -((profile_year - center) * (year - center)) / (15.0 * 15.0)
+                        return float(scores[i] + self._slate_calibration_beta * scale * cross)
+
+                    top.sort(key=calibrated_score, reverse=True)
+        if self._slate_calibration_beta > 0:
+            top = top[:k]
 
         def _rec(i: int) -> Recommendation:
             return Recommendation(
@@ -823,6 +904,9 @@ class Recommender:
             "tag_beta_all": self._tag_beta_all,
             "old_tag_year": self._old_tag_year,
             "era_gap_beta": self._era_gap_beta,
+            "item_cooccur_beta": self._item_cooccur_beta,
+            "slate_calibration_beta": self._slate_calibration_beta,
+            "slate_calibration_center_year": self._slate_calibration_center_year,
             "era_gap_year_span": self._era_gap_year_span,
             "era_gap_shape": self._era_gap_shape,
             "similar_alpha": self._similar_alpha,
